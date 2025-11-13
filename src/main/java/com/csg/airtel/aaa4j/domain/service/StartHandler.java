@@ -1,0 +1,190 @@
+package com.csg.airtel.aaa4j.domain.service;
+
+
+import com.csg.airtel.aaa4j.domain.model.AccountingRequestDto;
+import com.csg.airtel.aaa4j.domain.model.AccountingResponseEvent;
+import com.csg.airtel.aaa4j.domain.model.ServiceBucketInfo;
+
+import com.csg.airtel.aaa4j.domain.model.session.Balance;
+import com.csg.airtel.aaa4j.domain.model.session.Session;
+import com.csg.airtel.aaa4j.domain.model.session.UserSessionData;
+import com.csg.airtel.aaa4j.domain.produce.AccountProducer;
+import com.csg.airtel.aaa4j.external.clients.CacheClient;
+import com.csg.airtel.aaa4j.external.repository.UserBucketRepository;
+
+import io.smallrye.mutiny.Uni;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+
+@ApplicationScoped
+public class StartHandler {
+    private static final Logger log = Logger.getLogger(StartHandler.class);
+    private final CacheClient utilCache;
+    private final UserBucketRepository userRepository;
+    private final AccountProducer  accountProducer;
+
+    @Inject
+    public StartHandler(CacheClient utilCache, UserBucketRepository userRepository, AccountProducer accountProducer) {
+        this.utilCache = utilCache;
+        this.userRepository = userRepository;
+        this.accountProducer = accountProducer;
+    }
+
+    public Uni<Void> processAccountingStart(AccountingRequestDto request,String traceId) {
+
+        long startTime = System.currentTimeMillis();
+        log.infof("[traceId: %s] Processing accounting start for user: %s, sessionId: %s",
+                traceId, request.username(), request.sessionId());
+
+    return utilCache.getUserData(request.username())
+            .onItem().invoke(userData ->
+                    log.infof("[traceId: %s]User data retrieved for user: %s",traceId, request.username()))
+            .onItem().transformToUni(userSessionData -> {
+                if (userSessionData == null) {
+                    log.infof("[traceId: %s] No cache entry found for user: %s", traceId,request.username());
+                    Uni<Void> accountingResponseEventUni = handleNewUserSession(request);
+
+                    long duration = System.currentTimeMillis() - startTime;
+                    log.infof("[traceId: %s] Completed processing accounting start for user: %s in %d ms",
+                            traceId, request.username(), duration);
+                    return accountingResponseEventUni;
+                } else {
+                    log.infof("[traceId: %s] Existing session found for user: %s",traceId, request.username());
+                    Uni<Void> accountingResponseEventUni = handleExistingUserSession(request, userSessionData);
+                    long duration = System.currentTimeMillis() - startTime;
+                    log.infof("[traceId: %s] Completed processing accounting start for user: %s in %d ms",
+                            traceId, request.username(), duration);
+                    return accountingResponseEventUni;
+                }
+            })
+            .onFailure().recoverWithUni(throwable -> {
+                log.errorf(throwable, "[traceId: %s] Error processing accounting start for user: %s", request.username());
+                return null;
+            });
+}
+
+    private Uni<Void> handleExistingUserSession(
+            AccountingRequestDto request,
+            UserSessionData userSessionData) {
+
+        double availableBalance = calculateAvailableBalance(userSessionData.getBalance());
+
+        if (availableBalance <= 0) {
+            log.warnf("[traceId: %s] User: %s has exhausted their data balance. Cannot start new session.",
+                    request.username());
+           return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "Data balance exhausted",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
+
+        }
+        boolean sessionExists = userSessionData.getSessions()
+                .stream()
+                .anyMatch(session -> session.getSessionId().equals(request.sessionId()));
+
+        if (sessionExists) {
+            log.infof("[traceId: %s] Session already exists for user: %s, sessionId: %s",
+                    request.username(), request.sessionId());
+            return Uni.createFrom().voidItem();
+        }
+
+        // Add new session and update cache
+        userSessionData.getSessions().add(createSession(request));
+
+        return utilCache.updateUserAndRelatedCaches(request.username(), userSessionData)
+                .onItem().transformToUni(unused -> {
+                    log.infof("[traceId: %s] New session added for user: %s, sessionId: %s",
+                            request.username(), request.sessionId());
+                    return Uni.createFrom().voidItem();
+                })
+                .onFailure().recoverWithUni(throwable -> {
+                    log.errorf(throwable, "Failed to update cache for user: %s", request.username());
+                    return Uni.createFrom().voidItem();
+                });
+    }
+
+    private Uni<Void> handleNewUserSession(AccountingRequestDto request) {
+        log.infof("No existing session data found for user: %s. Creating new session data.",
+                request.username());
+
+        return userRepository.getServiceBucketsByUserName(request.username())
+                .onItem().transformToUni(serviceBuckets -> {
+                    if (serviceBuckets == null || serviceBuckets.isEmpty()) {
+                        log.warnf("[traceId: %s] No service buckets found for user: %s. Cannot create session data.",
+                                request.username());
+                      return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "No service buckets found",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
+
+                    }
+                    double totalQuota = 0.0;
+                    List<Balance> balanceList = new ArrayList<>(serviceBuckets.size());
+
+                    for (ServiceBucketInfo bucket : serviceBuckets) {
+                        Balance balance = createBalance(bucket);
+                        balanceList.add(balance);
+                        totalQuota += bucket.getCurrentBalance();
+                    }
+
+                    if (totalQuota <= 0) {
+                        log.warnf("[traceId: %s] User: %s has zero total data quota. Cannot create session data.",
+                                request.username());
+                        return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "Data quota is zero",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
+                    }
+
+                    UserSessionData newUserSessionData = new UserSessionData();
+                    Session session = createSession(request);
+                    newUserSessionData.setSessions(new ArrayList<>(List.of(session)));
+                    newUserSessionData.setBalance(balanceList);
+
+                    return utilCache.storeUserData(request.username(), newUserSessionData)
+                            .onItem().transformToUni(unused -> {
+                                log.infof("New user session data created and stored for user: %s",
+                                        request.username());
+                                return Uni.createFrom().voidItem();
+                            });
+                })
+                .onFailure().recoverWithUni(throwable -> {
+                    log.errorf(throwable, "[traceId: %s] Error creating new user session for user: %s",
+                            request.username());
+                    return Uni.createFrom().voidItem();
+                });
+    }
+
+    private double calculateAvailableBalance(List<Balance> balanceList) {
+        return balanceList.stream()
+                .mapToDouble(Balance::getQuota)
+                .sum();
+    }
+
+    private Session createSession(AccountingRequestDto request) {
+        return new Session(
+                request.sessionId(),
+                LocalDateTime.now(),
+                null,
+                "",
+                0,
+                0L,
+                request.framedIPAddress(),
+                request.nasIP()
+        );
+    }
+
+    private Balance createBalance(ServiceBucketInfo bucket) {
+        Balance balance = new Balance();
+        balance.setBucketId(bucket.getBucketId());
+        balance.setServiceId(bucket.getServiceId());
+        balance.setServiceExpiry(bucket.getExpiryDate());
+        balance.setPriority(bucket.getPriority());
+        balance.setQuota(bucket.getCurrentBalance());
+        balance.setInitialBalance(bucket.getInitialBalance());
+        balance.setServiceStartDate(bucket.getServiceStartDate());
+        balance.setServiceStatus(bucket.getStatus());
+        return balance;
+    }
+
+
+
+
+}
