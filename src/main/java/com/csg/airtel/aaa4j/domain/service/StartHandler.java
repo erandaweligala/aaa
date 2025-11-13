@@ -3,8 +3,9 @@ package com.csg.airtel.aaa4j.domain.service;
 
 import com.csg.airtel.aaa4j.domain.model.AccountingRequestDto;
 import com.csg.airtel.aaa4j.domain.model.AccountingResponseEvent;
+import com.csg.airtel.aaa4j.domain.model.EventTypes;
 import com.csg.airtel.aaa4j.domain.model.ServiceBucketInfo;
-
+import com.csg.airtel.aaa4j.domain.model.cdr.*;
 import com.csg.airtel.aaa4j.domain.model.session.Balance;
 import com.csg.airtel.aaa4j.domain.model.session.Session;
 import com.csg.airtel.aaa4j.domain.model.session.UserSessionData;
@@ -17,9 +18,11 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 
 @ApplicationScoped
@@ -92,13 +95,18 @@ public class StartHandler {
         }
 
         // Add new session and update cache
-        userSessionData.getSessions().add(createSession(request));
+        Session newSession = createSession(request);
+        userSessionData.getSessions().add(newSession);
 
         return utilCache.updateUserAndRelatedCaches(request.username(), userSessionData)
                 .onItem().transformToUni(unused -> {
                     log.infof("[traceId: %s] New session added for user: %s, sessionId: %s",
                             request.username(), request.sessionId());
                     return Uni.createFrom().voidItem();
+                })
+                .invoke(() -> {
+                    // Generate and send CDR event asynchronously (fire and forget)
+                    generateAndSendCDR(request, newSession);
                 })
                 .onFailure().recoverWithUni(throwable -> {
                     log.errorf(throwable, "Failed to update cache for user: %s", request.username());
@@ -143,6 +151,10 @@ public class StartHandler {
                                 log.infof("New user session data created and stored for user: %s",
                                         request.username());
                                 return Uni.createFrom().voidItem();
+                            })
+                            .invoke(() -> {
+                                // Generate and send CDR event asynchronously (fire and forget)
+                                generateAndSendCDR(request, session);
                             });
                 })
                 .onFailure().recoverWithUni(throwable -> {
@@ -184,7 +196,99 @@ public class StartHandler {
         return balance;
     }
 
+    /**
+     * Generates and sends CDR event asynchronously
+     * This is a fire-and-forget operation that won't block the main processing flow
+     */
+    private void generateAndSendCDR(AccountingRequestDto request, Session session) {
+        try {
+            AccountingCDREvent cdrEvent = buildCDREvent(request, session);
 
+            // Fire and forget - run asynchronously without blocking
+            accountProducer.produceAccountingCDREvent(cdrEvent)
+                    .subscribe()
+                    .with(
+                            success -> log.infof("CDR event sent successfully for session: %s", request.sessionId()),
+                            failure -> log.errorf(failure, "Failed to send CDR event for session: %s", request.sessionId())
+                    );
+        } catch (Exception e) {
+            log.errorf(e, "Error building CDR event for session: %s", request.sessionId());
+        }
+    }
 
+    /**
+     * Builds an AccountingCDREvent from the request and session data
+     */
+    private AccountingCDREvent buildCDREvent(AccountingRequestDto request, Session session) {
+        // Build Session CDR object
+        com.csg.airtel.aaa4j.domain.model.cdr.Session cdrSession = com.csg.airtel.aaa4j.domain.model.cdr.Session.builder()
+                .sessionId(request.sessionId())
+                .sessionTime("0")  // Start event has 0 session time
+                .startTime(session.getStartTime())
+                .updateTime(LocalDateTime.now())
+                .nasIdentifier(request.nasIP())
+                .nasIpAddress(request.nasIP())
+                .nasPort(request.nasPortId())
+                .nasPortType("Async")
+                .build();
+
+        // Build User CDR object
+        com.csg.airtel.aaa4j.domain.model.cdr.User cdrUser = com.csg.airtel.aaa4j.domain.model.cdr.User.builder()
+                .userName(request.username())
+                .build();
+
+        // Build Network CDR object
+        com.csg.airtel.aaa4j.domain.model.cdr.Network cdrNetwork = com.csg.airtel.aaa4j.domain.model.cdr.Network.builder()
+                .framedIpAddress(request.framedIPAddress())
+                .framedProtocol("PPP")
+                .serviceType("Framed-User")
+                .calledStationId(request.nasIP())
+                .build();
+
+        // Build Accounting CDR object - Start event has 0 octets
+        com.csg.airtel.aaa4j.domain.model.cdr.Accounting cdrAccounting = com.csg.airtel.aaa4j.domain.model.cdr.Accounting.builder()
+                .acctStatusType("Start")
+                .acctSessionTime(0)
+                .acctInputOctets(0L)
+                .acctOutputOctets(0L)
+                .acctInputPackets(0)
+                .acctOutputPackets(0)
+                .acctInputGigawords(0)
+                .acctOutputGigawords(0)
+                .build();
+
+        // Build Payload
+        Payload payload = Payload.builder()
+                .session(cdrSession)
+                .user(cdrUser)
+                .network(cdrNetwork)
+                .accounting(cdrAccounting)
+                .build();
+
+        // Build and return AccountingCDREvent
+        return AccountingCDREvent.builder()
+                .eventId(UUID.randomUUID().toString())
+                .eventType(EventTypes.ACCOUNTING_START.name())
+                .eventVersion("1.0")
+                .eventTimestamp(Instant.now())
+                .source("AAA-Service")
+                .payload(payload)
+                .build();
+    }
+
+    /**
+     * Calculates total octets from octets and gigawords
+     * Formula: totalOctets = (gigawords * 2^32) + octets
+     */
+    private Long calculateTotalOctets(Integer octets, Integer gigawords) {
+        long total = 0L;
+        if (gigawords != null && gigawords > 0) {
+            total = (long) gigawords * 4294967296L; // 2^32
+        }
+        if (octets != null) {
+            total += octets;
+        }
+        return total;
+    }
 
 }
