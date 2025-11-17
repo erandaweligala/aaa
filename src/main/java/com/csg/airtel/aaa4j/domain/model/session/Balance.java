@@ -1,6 +1,7 @@
 package com.csg.airtel.aaa4j.domain.model.session;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 public class Balance {
     private Long initialBalance;
@@ -92,5 +93,19 @@ public class Balance {
 
     public void setServiceStatus(String serviceStatus) {
         this.serviceStatus = serviceStatus;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Balance balance = (Balance) o;
+        return Objects.equals(bucketId, balance.bucketId) &&
+               Objects.equals(serviceId, balance.serviceId);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(bucketId, serviceId);
     }
 }

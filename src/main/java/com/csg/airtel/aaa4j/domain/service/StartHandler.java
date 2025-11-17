@@ -76,6 +76,7 @@ public class StartHandler {
             AccountingRequestDto request,
             UserSessionData userSessionData) {
 
+        // Thread-safe balance calculation
         double availableBalance = calculateAvailableBalance(userSessionData.getBalance());
 
         if (availableBalance <= 0) {
@@ -84,9 +85,14 @@ public class StartHandler {
            return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "Data balance exhausted",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
 
         }
-        boolean sessionExists = userSessionData.getSessions()
-                .stream()
-                .anyMatch(session -> session.getSessionId().equals(request.sessionId()));
+
+        // Thread-safe session existence check
+        boolean sessionExists;
+        synchronized (userSessionData.getSessions()) {
+            sessionExists = userSessionData.getSessions()
+                    .stream()
+                    .anyMatch(session -> session.getSessionId().equals(request.sessionId()));
+        }
 
         if (sessionExists) {
             log.infof("[traceId: %s] Session already exists for user: %s, sessionId: %s",
@@ -94,9 +100,13 @@ public class StartHandler {
             return Uni.createFrom().voidItem();
         }
 
-        // Add new session and update cache
+        // Add new session with thread-safe operation
         Session newSession = createSession(request);
-        userSessionData.getSessions().add(newSession);
+
+        // Thread-safe addition to session list
+        synchronized (userSessionData.getSessions()) {
+            userSessionData.getSessions().add(newSession);
+        }
 
         return utilCache.updateUserAndRelatedCaches(request.username(), userSessionData)
                 .onItem().transformToUni(unused -> {
@@ -164,10 +174,18 @@ public class StartHandler {
                 });
     }
 
+    /**
+     * Thread-safe method to calculate available balance across all buckets
+     *
+     * @param balanceList List of balances
+     * @return Total available quota
+     */
     private double calculateAvailableBalance(List<Balance> balanceList) {
-        return balanceList.stream()
-                .mapToDouble(Balance::getQuota)
-                .sum();
+        synchronized (balanceList) {
+            return balanceList.stream()
+                    .mapToDouble(Balance::getQuota)
+                    .sum();
+        }
     }
 
     private Session createSession(AccountingRequestDto request) {
