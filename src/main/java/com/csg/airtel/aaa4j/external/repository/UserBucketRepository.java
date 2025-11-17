@@ -10,6 +10,9 @@ import io.vertx.mutiny.sqlclient.RowSet;
 import io.vertx.mutiny.sqlclient.Tuple;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
+import org.eclipse.microprofile.faulttolerance.Retry;
+import org.eclipse.microprofile.faulttolerance.Timeout;
 import org.jboss.logging.Logger;
 
 
@@ -30,6 +33,24 @@ public class UserBucketRepository {
         this.client = client;
     }
 
+    /**
+     * Fetch service buckets with circuit breaker and retry for database resilience
+     *
+     * @param userName The username
+     * @return Uni<List<ServiceBucketInfo>> containing the service buckets
+     */
+    @CircuitBreaker(
+            requestVolumeThreshold = 20,
+            failureRatio = 0.6,
+            delay = 10000,
+            successThreshold = 3
+    )
+    @Retry(
+            maxRetries = 3,
+            delay = 200,
+            maxDuration = 10000
+    )
+    @Timeout(value = 10000)
     public Uni<List<ServiceBucketInfo>> getServiceBucketsByUserName(String userName) {
         long startTime = System.currentTimeMillis();
         log.infof("Fetching Start service buckets for user: %s", userName);

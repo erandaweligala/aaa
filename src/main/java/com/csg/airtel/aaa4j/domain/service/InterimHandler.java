@@ -103,21 +103,28 @@ public class InterimHandler {
     }
 
     private Uni<Void> processAccountingRequest(
-            UserSessionData userData, AccountingRequestDto request,String traceId) {
+            UserSessionData userData, AccountingRequestDto request, String traceId) {
         long startTime = System.currentTimeMillis();
         log.infof("Processing interim accounting request for user: %s, sessionId: %s",
                 request.username(), request.sessionId());
+
         Session session = findSession(userData, request.sessionId());
         if (session == null) {
             session = createSession(request);
         }
 
-        // Early return if session time hasn't increased
-        if (request.sessionTime() <= session.getSessionTime()) {
-            log.debugf("Duplicate Session time unchanged for sessionId: %s", request.sessionId());
-            return Uni.createFrom().voidItem();
+        // Thread-safe session time check to prevent duplicate processing
+        final Session finalSession = session;
+        synchronized (finalSession) {
+            if (request.sessionTime() <= finalSession.getSessionTime()) {
+                log.debugf("Duplicate Session time unchanged for sessionId: %s. Request time: %d, Session time: %d",
+                        request.sessionId(), request.sessionTime(), finalSession.getSessionTime());
+                return Uni.createFrom().voidItem();
+            }
+        }
 
-        }else {
+        // Continue processing with updated session
+        {
             return accountingUtil.updateSessionAndBalance(userData, session, request,null)
                     .onItem().transformToUni(updateResult -> {  // Changed from transform to transformToUni
                         if (!updateResult.success()) {
@@ -139,14 +146,23 @@ public class InterimHandler {
         }
     }
 
+    /**
+     * Thread-safe method to find a session by ID
+     *
+     * @param userData  User session data
+     * @param sessionId Session ID to find
+     * @return Session if found, null otherwise
+     */
     private Session findSession(UserSessionData userData, String sessionId) {
         List<Session> sessions = userData.getSessions();
-        for (Session session : sessions) {
-            if (session.getSessionId().equals(sessionId)) {
-                return session;
+        synchronized (sessions) {
+            for (Session session : sessions) {
+                if (session.getSessionId().equals(sessionId)) {
+                    return session;
+                }
             }
+            return null;
         }
-        return null;
     }
 
 

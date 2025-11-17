@@ -53,13 +53,14 @@ public class StopHandler {
     }
 
     public Uni<Void> processAccountingStop(
-            UserSessionData userSessionData,AccountingRequestDto request
-            ,String bucketId) {
+            UserSessionData userSessionData, AccountingRequestDto request, String bucketId) {
 
-        if (userSessionData.getSessions() == null || userSessionData.getSessions().isEmpty()) {
-            log.infof("[traceId: %s] No active sessions found for user: %s", request.username());
-            return Uni.createFrom().voidItem();
-
+        // Thread-safe session list check
+        synchronized (userSessionData.getSessions()) {
+            if (userSessionData.getSessions() == null || userSessionData.getSessions().isEmpty()) {
+                log.infof("[traceId: %s] No active sessions found for user: %s", request.username());
+                return Uni.createFrom().voidItem();
+            }
         }
 
         Session session = findSessionById(userSessionData.getSessions(), request.sessionId());
@@ -93,7 +94,14 @@ public class StopHandler {
                     // Generate and send CDR event asynchronously (fire and forget)
                     generateAndSendCDR(request, session);
                 })
-                .invoke(() -> userSessionData.getSessions().remove(session))
+                .invoke(() -> {
+                    // Thread-safe session removal
+                    synchronized (userSessionData.getSessions()) {
+                        userSessionData.getSessions().remove(session);
+                        log.infof("Session removed for user: %s, sessionId: %s. Remaining sessions: %d",
+                                request.username(), request.sessionId(), userSessionData.getSessions().size());
+                    }
+                })
                 .call(() -> {
                     log.infof("[traceId: %s] Updating cache for user: %s", request.username());
                     // Update cache
@@ -116,13 +124,22 @@ public class StopHandler {
                 });
     }
 
+    /**
+     * Thread-safe method to find a session by ID
+     *
+     * @param sessions  List of sessions
+     * @param sessionId Session ID to find
+     * @return Session if found, null otherwise
+     */
     private Session findSessionById(List<Session> sessions, String sessionId) {
-        for (Session session : sessions) {
-            if (session.getSessionId().equals(sessionId)) {
-                return session;
+        synchronized (sessions) {
+            for (Session session : sessions) {
+                if (session.getSessionId().equals(sessionId)) {
+                    return session;
+                }
             }
+            return null;
         }
-        return null;
     }
 
 

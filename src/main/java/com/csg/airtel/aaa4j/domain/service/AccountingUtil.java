@@ -15,8 +15,7 @@ import org.jboss.logging.Logger;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-
-
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
@@ -37,31 +36,37 @@ public class AccountingUtil {
     }
 
     /**
+     * Thread-safe method to find balance with highest priority.
+     * Synchronizes on the balances list to prevent concurrent modification during iteration.
+     *
      * @param balances user related buckets balances
-     * @param bucketId specific bucket id to prioritize
-     * @return return the balance with the highest priority
+     * @param bucketId specific bucket id to prioritize (can be null)
+     * @return Uni<Balance> with the highest priority balance
      */
-    public Uni<Balance> findBalanceWithHighestPriority(List<Balance> balances,String bucketId) {
+    public Uni<Balance> findBalanceWithHighestPriority(List<Balance> balances, String bucketId) {
         log.infof("Finding balance with highest priority from %d balances", balances.size());
-        return Uni.createFrom().item(() -> computeHighestPriority(balances,bucketId))
-                .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());
+        return Uni.createFrom().item(() -> {
+            synchronized (balances) {
+                return computeHighestPriority(balances, bucketId);
+            }
+        }).runSubscriptionOn(Infrastructure.getDefaultWorkerPool());
     }
 
-    private Balance computeHighestPriority(List<Balance> balances,String bucketId) {
-
-        if(bucketId!=null){
+    private Balance computeHighestPriority(List<Balance> balances, String bucketId) {
+        // Search for specific bucket ID first
+        if (bucketId != null) {
             for (Balance balance : balances) {
                 if (balance.getBucketId().equals(bucketId)) {
                     return balance;
                 }
             }
         }
+
         if (balances == null || balances.isEmpty()) {
             return null;
         }
 
         return getBalance(balances);
-
     }
 
     private static Balance getBalance(List<Balance> balances) {
@@ -160,24 +165,52 @@ public class AccountingUtil {
         return foundBalance.getQuota() - usageDelta;
     }
 
+    /**
+     * Thread-safe method to replace an element in a collection.
+     * This creates a new list to avoid concurrent modification issues and ensures atomicity.
+     *
+     * @param collection The collection to modify
+     * @param element    The element to replace (matched by equals())
+     * @param <T>        The type of elements in the collection
+     */
     private <T> void replaceInCollection(Collection<T> collection, T element) {
-        collection.removeIf(item -> item.equals(element));
-        collection.add(element);
+        synchronized (collection) {
+            // Remove existing element and add the new one atomically
+            collection.removeIf(item -> item.equals(element));
+            collection.add(element);
+        }
     }
 
 
+    /**
+     * Thread-safe method to send disconnect events for all other sessions.
+     * Creates a snapshot of sessions list to avoid concurrent modification during iteration.
+     *
+     * @param userSessionData The user session data
+     * @param sessionId       The current session ID to exclude
+     * @param username        The username
+     * @return Uni<Void> indicating completion
+     */
     private Uni<Void> updateCOASessionForDisconnect(UserSessionData userSessionData, String sessionId, String username) {
-        return Multi.createFrom().iterable(userSessionData.getSessions())
+        // Create a snapshot of sessions to avoid concurrent modification
+        List<Session> sessionSnapshot;
+        synchronized (userSessionData.getSessions()) {
+            sessionSnapshot = new ArrayList<>(userSessionData.getSessions());
+        }
+
+        return Multi.createFrom().iterable(sessionSnapshot)
                 .filter(session -> !session.getSessionId().equals(sessionId))
-                .onItem().transformToUniAndConcatenate(  // Change this
+                .onItem().transformToUniAndConcatenate(
                         session -> accountProducer.produceAccountingResponseEvent(
-                                        MappingUtil.createResponse(session.getSessionId(), "Disconnect", session.getNasIp(), session.getFramedId(), username)
+                                        MappingUtil.createResponse(session.getSessionId(), "Disconnect",
+                                                session.getNasIp(), session.getFramedId(), username)
                                 )
                                 .onFailure().retry()
                                 .withBackOff(Duration.ofMillis(100), Duration.ofSeconds(2))
                                 .atMost(2)
                                 .onFailure().invoke(failure ->
-                                        log.errorf(failure, "Failed to produce disconnect event for session: %s", session.getSessionId())
+                                        log.errorf(failure, "Failed to produce disconnect event for session: %s",
+                                                session.getSessionId())
                                 )
                                 .onFailure().recoverWithNull()
                 )
