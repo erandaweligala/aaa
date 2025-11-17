@@ -184,7 +184,7 @@ public class InterimHandler {
      */
     private void generateAndSendCDR(AccountingRequestDto request, Session session) {
         try {
-            AccountingCDREvent cdrEvent = buildCDREvent(request, session);
+            AccountingCDREvent cdrEvent = CdrMappingUtil.buildInterimCDREvent(request, session);
 
             // Fire and forget - run asynchronously without blocking
             accountProducer.produceAccountingCDREvent(cdrEvent)
@@ -196,84 +196,6 @@ public class InterimHandler {
         } catch (Exception e) {
             log.errorf(e, "Error building CDR event for session: %s", request.sessionId());
         }
-    }
-
-    /**
-     * Builds an AccountingCDREvent from the request and session data
-     */
-    private AccountingCDREvent buildCDREvent(AccountingRequestDto request, Session session) {
-        // Build Session CDR object
-        com.csg.airtel.aaa4j.domain.model.cdr.Session cdrSession = com.csg.airtel.aaa4j.domain.model.cdr.Session.builder()
-                .sessionId(request.sessionId())
-                .sessionTime(request.sessionTime() != null ? String.valueOf(request.sessionTime()) : "0")
-                .startTime(session.getStartTime())
-                .updateTime(LocalDateTime.now())
-                .nasIdentifier(request.nasIP())
-                .nasIpAddress(request.nasIP())
-                .nasPort(request.nasPortId())
-                .nasPortType("Async")
-                .build();
-
-        // Build User CDR object
-        com.csg.airtel.aaa4j.domain.model.cdr.User cdrUser = com.csg.airtel.aaa4j.domain.model.cdr.User.builder()
-                .userName(request.username())
-                .build();
-
-        // Build Network CDR object
-        com.csg.airtel.aaa4j.domain.model.cdr.Network cdrNetwork = com.csg.airtel.aaa4j.domain.model.cdr.Network.builder()
-                .framedIpAddress(request.framedIPAddress())
-                .framedProtocol("PPP")
-                .serviceType("Framed-User")
-                .calledStationId(request.nasIP())
-                .build();
-
-        // Build Accounting CDR object with octets calculation
-        Long inputOctets = calculateTotalOctets(request.inputOctets(), request.inputGigaWords());
-        Long outputOctets = calculateTotalOctets(request.outputOctets(), request.outputGigaWords());
-
-        com.csg.airtel.aaa4j.domain.model.cdr.Accounting cdrAccounting = com.csg.airtel.aaa4j.domain.model.cdr.Accounting.builder()
-                .acctStatusType("Interim-Update")
-                .acctSessionTime(request.sessionTime())
-                .acctInputOctets(inputOctets)
-                .acctOutputOctets(outputOctets)
-                .acctInputPackets(0)
-                .acctOutputPackets(0)
-                .acctInputGigawords(request.inputGigaWords())
-                .acctOutputGigawords(request.outputGigaWords())
-                .build();
-
-        // Build Payload
-        Payload payload = Payload.builder()
-                .session(cdrSession)
-                .user(cdrUser)
-                .network(cdrNetwork)
-                .accounting(cdrAccounting)
-                .build();
-
-        // Build and return AccountingCDREvent
-        return AccountingCDREvent.builder()
-                .eventId(UUID.randomUUID().toString())
-                .eventType(EventTypes.ACCOUNTING_INTERIM.name())
-                .eventVersion("1.0")
-                .eventTimestamp(Instant.now())
-                .source("AAA-Service")
-                .payload(payload)
-                .build();
-    }
-
-    /**
-     * Calculates total octets from octets and gigawords
-     * Formula: totalOctets = (gigawords * 2^32) + octets
-     */
-    private Long calculateTotalOctets(Integer octets, Integer gigawords) {
-        long total = 0L;
-        if (gigawords != null && gigawords > 0) {
-            total = (long) gigawords * 4294967296L; // 2^32
-        }
-        if (octets != null) {
-            total += octets;
-        }
-        return total;
     }
 
 }
