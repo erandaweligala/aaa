@@ -19,6 +19,6 @@ public class SQLconstant {
                 INNER JOIN csgaaa.service_table s ON u.username = s.user_name
                 INNER JOIN csgaaa.bucket_table b ON s.service_id = b.service_id
             WHERE u.username = :1
-            ORDER BY TO_NUMBER(b.priority) DESC
+            ORDER BY b.priority DESC
             """;
 }
