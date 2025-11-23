@@ -2,6 +2,9 @@ package com.csg.airtel.aaa4j.domain.service;
 
 import com.csg.airtel.aaa4j.domain.model.AccountingRequestDto;
 import com.csg.airtel.aaa4j.domain.model.AccountingResponseEvent;
+import com.csg.airtel.aaa4j.domain.model.ServiceBucketInfo;
+import com.csg.airtel.aaa4j.domain.model.cdr.*;
+import com.csg.airtel.aaa4j.domain.model.session.Balance;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -59,6 +62,24 @@ public class MappingUtil {
                 message,
                 0L,
                 attributes);
+    }
+
+
+    public static Balance createBalance(ServiceBucketInfo bucket) {
+        Balance balance = new Balance();
+        balance.setBucketId(bucket.getBucketId());
+        balance.setServiceId(bucket.getServiceId());
+        balance.setServiceExpiry(bucket.getExpiryDate());
+        balance.setPriority(bucket.getPriority());
+        balance.setQuota(bucket.getCurrentBalance());
+        balance.setInitialBalance(bucket.getInitialBalance());
+        balance.setServiceStartDate(bucket.getServiceStartDate());
+        balance.setServiceStatus(bucket.getStatus());
+        balance.setConsumptionLimit(bucket.getConsumptionLimit());
+        balance.setTimeWindow(bucket.getTimeWindow());
+        balance.setConsumptionLimitWindow(bucket.getConsumptionTimeWindow());
+        balance.setBucketUsername(bucket.getBucketUser());
+        return balance;
     }
 
 

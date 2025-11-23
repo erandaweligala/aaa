@@ -10,16 +10,13 @@ import io.vertx.mutiny.sqlclient.RowSet;
 import io.vertx.mutiny.sqlclient.Tuple;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
-import org.eclipse.microprofile.faulttolerance.Retry;
-import org.eclipse.microprofile.faulttolerance.Timeout;
 import org.jboss.logging.Logger;
 
 
 import java.util.ArrayList;
 import java.util.List;
 
-import static com.csg.airtel.aaa4j.domain.constant.SQLconstant.QUERY_BALANCE;
+import static com.csg.airtel.aaa4j.domain.constant.SQLConstant.QUERY_BALANCE;
 
 @ApplicationScoped
 public class UserBucketRepository {
@@ -33,24 +30,6 @@ public class UserBucketRepository {
         this.client = client;
     }
 
-    /**
-     * Fetch service buckets with circuit breaker and retry for database resilience
-     *
-     * @param userName The username
-     * @return Uni<List<ServiceBucketInfo>> containing the service buckets
-     */
-    @CircuitBreaker(
-            requestVolumeThreshold = 20,
-            failureRatio = 0.6,
-            delay = 10000,
-            successThreshold = 3
-    )
-    @Retry(
-            maxRetries = 3,
-            delay = 200,
-            maxDuration = 10000
-    )
-    @Timeout(value = 10000)
     public Uni<List<ServiceBucketInfo>> getServiceBucketsByUserName(String userName) {
         long startTime = System.currentTimeMillis();
         log.infof("Fetching Start service buckets for user: %s", userName);
@@ -83,6 +62,11 @@ public class UserBucketRepository {
             info.setExpiryDate(row.getLocalDateTime("EXPIRY_DATE"));
             info.setServiceStartDate(row.getLocalDateTime("SERVICE_START_DATE"));
             info.setPlanId(row.getString("PLAN_ID"));
+            info.setBucketUser(row.getString("BUCKET_USER"));
+            info.setConsumptionLimit(row.getLong("CONSUMPTION_LIMIT"));
+            info.setConsumptionTimeWindow(row.getLong("CONSUMPTION_LIMIT_WINDOW"));
+            info.setSessionTimeout(row.getString("SESSION_TIMEOUT"));
+            info.setTimeWindow(row.getString("TIME_WINDOW"));
             results.add(info);
         }
         return results;

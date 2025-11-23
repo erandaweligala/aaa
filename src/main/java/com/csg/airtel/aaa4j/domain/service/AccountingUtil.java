@@ -15,10 +15,14 @@ import org.jboss.logging.Logger;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+
+
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-
+import java.util.Objects;
 
 
 @ApplicationScoped
@@ -36,37 +40,31 @@ public class AccountingUtil {
     }
 
     /**
-     * Thread-safe method to find balance with highest priority.
-     * Synchronizes on the balances list to prevent concurrent modification during iteration.
-     *
      * @param balances user related buckets balances
-     * @param bucketId specific bucket id to prioritize (can be null)
-     * @return Uni<Balance> with the highest priority balance
+     * @param bucketId specific bucket id to prioritize
+     * @return return the balance with the highest priority
      */
-    public Uni<Balance> findBalanceWithHighestPriority(List<Balance> balances, String bucketId) {
+    public Uni<Balance> findBalanceWithHighestPriority(List<Balance> balances,String bucketId) {
         log.infof("Finding balance with highest priority from %d balances", balances.size());
-        return Uni.createFrom().item(() -> {
-            synchronized (balances) {
-                return computeHighestPriority(balances, bucketId);
-            }
-        }).runSubscriptionOn(Infrastructure.getDefaultWorkerPool());
+        return Uni.createFrom().item(() -> computeHighestPriority(balances,bucketId))
+                .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());
     }
 
-    private Balance computeHighestPriority(List<Balance> balances, String bucketId) {
-        // Search for specific bucket ID first
-        if (bucketId != null) {
+    private Balance computeHighestPriority(List<Balance> balances,String bucketId) {
+
+        if(bucketId!=null){
             for (Balance balance : balances) {
                 if (balance.getBucketId().equals(bucketId)) {
                     return balance;
                 }
             }
         }
-
         if (balances == null || balances.isEmpty()) {
             return null;
         }
 
         return getBalance(balances);
+
     }
 
     private static Balance getBalance(List<Balance> balances) {
@@ -76,7 +74,10 @@ public class AccountingUtil {
         LocalDateTime highestExpiry = null;
 
         for (Balance balance : balances) {
-            if (balance.getQuota() <= 0) {
+
+            String timeWindow = balance.getTimeWindow(); // assume time window 6PM-6AM
+
+            if (balance.getQuota() <= 0 || !isWithinTimeWindow(timeWindow)) {
                 continue;
             }
 
@@ -97,10 +98,18 @@ public class AccountingUtil {
         return highest;
     }
 
+    /**
+     * @param userData get user session data
+     * @param sessionData get individual session Data
+     * @param request packet request
+     * @param bucketId bucket id
+     * @return update results
+     */
     public Uni<UpdateResult> updateSessionAndBalance(
             UserSessionData userData,
             Session sessionData,
             AccountingRequestDto request,String bucketId) {
+
 
         long totalGigaWords =(long) request.outputGigaWords() + (long) request.inputGigaWords();
 
@@ -108,49 +117,92 @@ public class AccountingUtil {
 
         long totalUsage = calculateTotalOctets(totalOctets, totalGigaWords);
 
-        return findBalanceWithHighestPriority(userData.getBalance(),bucketId)
-                .onItem().transformToUni(foundBalance -> {
-                    if (foundBalance == null) {
-                        log.warnf("No valid balance found for user: %s", request.username());
-                        return Uni.createFrom().item(UpdateResult.failure("error"));
+        return getGroupBucket(userData.getGroupId())
+                .onItem()
+                .transformToUni(balanceList -> {
+                    List<Balance> combinedBalances = new ArrayList<>(userData.getBalance());
+                    if (balanceList != null && !balanceList.isEmpty()) {
+                        combinedBalances.addAll(balanceList);
                     }
+                    return findBalanceWithHighestPriority(combinedBalances,bucketId)
+                            .onItem().transformToUni(foundBalance -> {
 
-                    long newQuota = getNewQuota(sessionData, foundBalance, totalUsage);
+                                if (foundBalance == null) {
+                                    log.warnf("No valid balance found for user: %s", request.username());
+                                    return Uni.createFrom().item(UpdateResult.failure("error"));
+                                }
+                                String previousUsageBucketId = getString(sessionData, foundBalance);
 
-                    if (newQuota <= 0) {
-                        log.warnf("Quota depleted for session: %s", request.sessionId());
-                        newQuota = 0;
-                    }
+                                long newQuota = getNewQuota(sessionData, foundBalance, totalUsage);
 
-                    foundBalance.setQuota(newQuota);
+                                if (newQuota <= 0) {
+                                    log.warnf("Quota depleted for session: %s", request.sessionId());
+                                    newQuota = 0;
+                                }
 
-                    sessionData.setPreviousTotalUsageQuotaValue(totalUsage);
-                    sessionData.setSessionTime(request.sessionTime());
+                                foundBalance.setQuota(newQuota);
 
-                    replaceInCollection(userData.getBalance(), foundBalance);
-                    replaceInCollection(userData.getSessions(), sessionData);
+                                sessionData.setPreviousTotalUsageQuotaValue(totalUsage);
+                                sessionData.setSessionTime(request.sessionTime());
+                                sessionData.setPreviousUsageBucketId(foundBalance.getBucketId());
 
-                    UpdateResult success = UpdateResult.success(newQuota, foundBalance.getBucketId(),foundBalance);
-                    if (success.newQuota() <= 0) {
-                        // Handle disconnect: produce events, remove session, update cache, return result
-                        return updateCOASessionForDisconnect(userData, request.sessionId(), request.username())
-                                .invoke(() -> {
-                                    // Remove the current session after all disconnect events are produced
-                                    log.infof("Successfully updated session: %s", request.sessionId());
-                                    userData.getSessions().removeIf(session ->
-                                            !session.getSessionId().equals(request.sessionId()));
-                                })
-                                .chain(() -> cacheClient.updateUserAndRelatedCaches(request.username(), userData))
-                                .onFailure().invoke(err ->
-                                        log.errorf(err, "Error updating cache for user: %s", request.username()))
-                                .replaceWith(success);
-                    }
+                                replaceInCollection(userData.getBalance(), foundBalance);
+                                replaceInCollection(userData.getSessions(), sessionData);
 
-                    return cacheClient.updateUserAndRelatedCaches(request.username(), userData)
-                            .onFailure().invoke(err ->
-                                    log.errorf(err, "Error updating cache for user: %s", request.username()))
-                            .replaceWith(success);
+                                UpdateResult success = UpdateResult.success(newQuota, foundBalance.getBucketId(),foundBalance,previousUsageBucketId);
+                                if (success.newQuota() <= 0 || !(foundBalance.getBucketId().equals(previousUsageBucketId))) {
+
+                                    if(!foundBalance.getBucketUsername().equals(request.username())) {
+                                        userData.getBalance().remove(foundBalance);
+                                    }
+                                    // Handle disconnect: produce events, remove session, update cache, return result
+                                    return updateCOASessionForDisconnect(userData, request.sessionId(), request.username())
+                                            .invoke(() -> {
+                                                // Remove the current session after all disconnect events are produced
+                                                log.infof("Successfully updated COA Disconnect session: %s", request.sessionId());
+                                                userData.getSessions().removeIf(session ->
+                                                        !session.getSessionId().equals(request.sessionId()));
+                                            })
+                                            .chain(() -> cacheClient.updateUserAndRelatedCaches(request.username(), userData))
+                                            .onFailure().invoke(err ->
+                                                    log.errorf(err, "Error updating cache COA Disconnect for user: %s", request.username()))
+                                            .replaceWith(success);
+                                }
+
+                                return getUpdateResultUni(userData, request, foundBalance, success);
+
+                            });
                 });
+
+
+    }
+
+    private static String getString(Session sessionData, Balance foundBalance) {
+        String previousUsageBucketId = sessionData.getPreviousUsageBucketId();
+        if(previousUsageBucketId == null){
+            previousUsageBucketId = foundBalance.getBucketId();
+        }
+        return previousUsageBucketId;
+    }
+
+    private Uni<UpdateResult> getUpdateResultUni(UserSessionData userData, AccountingRequestDto request, Balance foundBalance, UpdateResult success) {
+        if(!foundBalance.getBucketUsername().equals(request.username())) {
+            userData.getBalance().remove(foundBalance);
+            UserSessionData userSessionGroupData = new UserSessionData();
+            userSessionGroupData.setBalance(List.of(foundBalance));
+            return cacheClient.updateUserAndRelatedCaches(foundBalance.getBucketUsername(), userSessionGroupData)
+                    .onFailure().invoke(err ->
+                            log.errorf(err, "Error updating Group Balance cache for user: %s", foundBalance.getBucketUsername()))
+                    .chain(() -> cacheClient.updateUserAndRelatedCaches(request.username(), userData)
+                            .onFailure().invoke(err ->
+                                    log.errorf(err, "Error updating cache for user: %s", request.username())))
+                    .replaceWith(success);
+        }else {
+            return cacheClient.updateUserAndRelatedCaches(request.username(), userData)
+                    .onFailure().invoke(err ->
+                            log.errorf(err, "Error updating cache for user: %s", request.username()))
+                    .replaceWith(success);
+        }
     }
 
     private long getNewQuota(Session sessionData, Balance foundBalance, long totalUsage) {
@@ -165,52 +217,24 @@ public class AccountingUtil {
         return foundBalance.getQuota() - usageDelta;
     }
 
-    /**
-     * Thread-safe method to replace an element in a collection.
-     * This creates a new list to avoid concurrent modification issues and ensures atomicity.
-     *
-     * @param collection The collection to modify
-     * @param element    The element to replace (matched by equals())
-     * @param <T>        The type of elements in the collection
-     */
     private <T> void replaceInCollection(Collection<T> collection, T element) {
-        synchronized (collection) {
-            // Remove existing element and add the new one atomically
-            collection.removeIf(item -> item.equals(element));
-            collection.add(element);
-        }
+        collection.removeIf(item -> item.equals(element));
+        collection.add(element);
     }
 
 
-    /**
-     * Thread-safe method to send disconnect events for all other sessions.
-     * Creates a snapshot of sessions list to avoid concurrent modification during iteration.
-     *
-     * @param userSessionData The user session data
-     * @param sessionId       The current session ID to exclude
-     * @param username        The username
-     * @return Uni<Void> indicating completion
-     */
     private Uni<Void> updateCOASessionForDisconnect(UserSessionData userSessionData, String sessionId, String username) {
-        // Create a snapshot of sessions to avoid concurrent modification
-        List<Session> sessionSnapshot;
-        synchronized (userSessionData.getSessions()) {
-            sessionSnapshot = new ArrayList<>(userSessionData.getSessions());
-        }
-
-        return Multi.createFrom().iterable(sessionSnapshot)
+        return Multi.createFrom().iterable(userSessionData.getSessions())
                 .filter(session -> !session.getSessionId().equals(sessionId))
-                .onItem().transformToUniAndConcatenate(
+                .onItem().transformToUniAndConcatenate(  // Change this
                         session -> accountProducer.produceAccountingResponseEvent(
-                                        MappingUtil.createResponse(session.getSessionId(), "Disconnect",
-                                                session.getNasIp(), session.getFramedId(), username)
+                                        MappingUtil.createResponse(session.getSessionId(), "Disconnect", session.getNasIp(), session.getFramedId(), username)
                                 )
                                 .onFailure().retry()
                                 .withBackOff(Duration.ofMillis(100), Duration.ofSeconds(2))
                                 .atMost(2)
                                 .onFailure().invoke(failure ->
-                                        log.errorf(failure, "Failed to produce disconnect event for session: %s",
-                                                session.getSessionId())
+                                        log.errorf(failure, "Failed to produce disconnect event for session: %s", session.getSessionId())
                                 )
                                 .onFailure().recoverWithNull()
                 )
@@ -223,5 +247,54 @@ public class AccountingUtil {
         return (gigawords * GIGAWORD_MULTIPLIER) + octets;
     }
 
+
+    public static boolean isWithinTimeWindow(String timeWindow) {
+        // Parse the time window string (e.g., "6PM-6AM" or "18:00-06:00")
+        String[] times = timeWindow.split("-");
+
+        if (times.length != 2) {
+            log.errorf("Invalid time window: %s", timeWindow);
+            throw new IllegalArgumentException("Invalid time window format");
+        }
+
+        LocalTime startTime = parseTime(times[0].trim());
+        LocalTime endTime = parseTime(times[1].trim());
+        LocalTime currentTime = LocalTime.now();
+
+        if (startTime.isBefore(endTime)) {
+
+            return !currentTime.isBefore(startTime) && !currentTime.isAfter(endTime);
+        } else {
+            return !currentTime.isBefore(startTime) || !currentTime.isAfter(endTime);
+        }
+    }
+
+    private static LocalTime parseTime(String time) {
+        time = time.toUpperCase().trim();
+
+        if (time.contains("AM") || time.contains("PM")) {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("h:mma");
+            if (!time.contains(":")) {
+                time = time.substring(0, time.length() - 2) + ":00" + time.substring(time.length() - 2);
+            }
+            return LocalTime.parse(time, formatter);
+        } else {
+            // 24-hour format
+            return LocalTime.parse(time);
+        }
+    }
+
+    private Uni<List<Balance>> getGroupBucket(String groupId) {
+        Uni<List<Balance>> balanceListUni;
+
+        if (!Objects.equals(groupId, "1")) {
+            balanceListUni = cacheClient.getUserData(groupId)
+                    .onItem()
+                    .transform(UserSessionData::getBalance);
+        } else {
+            balanceListUni = Uni.createFrom().item(new ArrayList<>());
+        }
+    return balanceListUni;
+    }
 
 }

@@ -18,6 +18,7 @@ import org.eclipse.microprofile.faulttolerance.Retry;
 import org.eclipse.microprofile.faulttolerance.Timeout;
 import org.jboss.logging.Logger;
 
+
 import java.time.Duration;
 
 
@@ -36,25 +37,21 @@ public class CacheClient {
     }
 
     /**
-     * Store user data in Redis with version initialization
+     * Store user data in Redis
      */
     public Uni<Void> storeUserData(String userId, UserSessionData userData) {
         long startTime = System.currentTimeMillis();
         log.infof("Storing user data  for  cache userId: %s", userId);
-
-        // Initialize version for new entries
-        userData.initializeVersion();
-
         String key = KEY_PREFIX + userId;
         String jsonValue = serialize(userData);
         Uni<Void> result = reactiveRedisDataSource.value(String.class)
-                .set(key, jsonValue, new SetArgs().ex(Duration.ofHours(1000)));
+                .set(key, jsonValue);
         log.infof("User data stored Complete for userId: %s in %d ms", userId, (System.currentTimeMillis() - startTime));
         return result;
     }
 
     /**
-     * Retrieve user data from Redis with circuit breaker and retry for high availability
+     * Retrieve user data from Redis
      */
     @CircuitBreaker(
             requestVolumeThreshold = 10,
@@ -63,7 +60,7 @@ public class CacheClient {
             successThreshold = 2
     )
     @Retry(
-            maxRetries = 3,
+            maxRetries = 2,
             delay = 100,
             maxDuration = 5000
     )
@@ -90,64 +87,19 @@ public class CacheClient {
     }
 
 
-    /**
-     * Update user data with optimistic locking using version checking.
-     * This method implements a retry mechanism to handle concurrent modifications.
-     *
-     * @param userId   The user ID
-     * @param userData The updated user session data
-     * @return Uni<Void> indicating completion
-     */
     public Uni<Void> updateUserAndRelatedCaches(String userId, UserSessionData userData) {
-        return updateUserDataWithRetry(userId, userData, 0, 5);
-    }
-
-    /**
-     * Internal method to update user data with retry logic for optimistic locking
-     *
-     * @param userId       The user ID
-     * @param userData     The updated user session data
-     * @param attempt      Current retry attempt
-     * @param maxAttempts  Maximum number of retry attempts
-     * @return Uni<Void> indicating completion
-     */
-    private Uni<Void> updateUserDataWithRetry(String userId, UserSessionData userData, int attempt, int maxAttempts) {
         long startTime = System.currentTimeMillis();
+        log.infof("Updating user data and related caches for userId: %s", userId);
         String userKey = KEY_PREFIX + userId;
 
-        if (attempt >= maxAttempts) {
-            log.errorf("Max retry attempts (%d) exceeded for updating user data for userId: %s", maxAttempts, userId);
-            return Uni.createFrom().failure(
-                new RuntimeException("Failed to update cache after " + maxAttempts + " attempts due to concurrent modifications")
-            );
-        }
-
-        // Increment version before updating
-        userData.incrementVersion();
-
-        log.infof("Updating user data (attempt %d/%d) for userId: %s, version: %d",
-                attempt + 1, maxAttempts, userId, userData.getVersion());
-
         return Uni.createFrom().item(() -> serialize(userData))
-                .onItem().invoke(json -> {
-                    if (log.isDebugEnabled()) {
-                        log.debugf("Serialized data for user %s: %s", userId, json);
-                    }
-                })
+                .onItem().invoke(json -> log.infof("Updating cache for user {}: {}", userId, json))
                 .onItem().transformToUni(serializedData ->
                         reactiveRedisDataSource.value(String.class)
                                 .set(userKey, serializedData, new SetArgs().ex(Duration.ofHours(1000)))
                 )
-                .onItem().invoke(() ->
-                        log.infof("Cache update complete for userId: %s, version: %d in %d ms",
-                                userId, userData.getVersion(), (System.currentTimeMillis() - startTime))
-                )
-                .onFailure().invoke(err ->
-                        log.errorf(err, "Failed to update cache for user %s on attempt %d", userId, attempt + 1)
-                )
-                .onFailure().retry()
-                .withBackOff(Duration.ofMillis(50), Duration.ofMillis(500))
-                .atMost(2)
+                .onItem().invoke(() -> log.infof("Cache update complete for userId: %s in %d ms", userId, (System.currentTimeMillis() - startTime)))
+                .onFailure().invoke(err -> log.error("Failed to update cache for user {}", userId, err))
                 .replaceWithVoid();
     }
 

@@ -10,14 +10,14 @@ public record UpdateResult(
         String errorMessage,
         Long newQuota,
         Balance balance,
-        String bucketId) {
+        String bucketId,String previousUsageBucketId) {
 
-    public static UpdateResult success(Long newQuota,String bucketId,Balance balance) {
-        return new UpdateResult(true, null, newQuota,balance, bucketId);
+    public static UpdateResult success(Long newQuota,String bucketId,Balance balance,String previousUsageBucketId) {
+        return new UpdateResult(true, null, newQuota,balance, bucketId,previousUsageBucketId);
     }
 
    public static UpdateResult failure(String errorMessage) {
-        return new UpdateResult(false, errorMessage, null,null, null);
+        return new UpdateResult(false, errorMessage, null,null, null,null);
     }
 
 }

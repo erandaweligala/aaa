@@ -2,9 +2,8 @@ package com.csg.airtel.aaa4j.domain.service;
 
 import com.csg.airtel.aaa4j.domain.model.AccountingRequestDto;
 import com.csg.airtel.aaa4j.domain.model.AccountingResponseEvent;
-import com.csg.airtel.aaa4j.domain.model.EventTypes;
 import com.csg.airtel.aaa4j.domain.model.ServiceBucketInfo;
-import com.csg.airtel.aaa4j.domain.model.cdr.*;
+import com.csg.airtel.aaa4j.domain.model.cdr.AccountingCDREvent;
 import com.csg.airtel.aaa4j.domain.model.session.Balance;
 import com.csg.airtel.aaa4j.domain.model.session.Session;
 import com.csg.airtel.aaa4j.domain.model.session.UserSessionData;
@@ -18,10 +17,8 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.UUID;
 
 @ApplicationScoped
 public class InterimHandler {
@@ -80,12 +77,19 @@ public class InterimHandler {
                     }
                     int bucketCount = serviceBuckets.size();
                     List<Balance> balanceList = new ArrayList<>(bucketCount);
+                    List<Balance> balanceGroupList = new ArrayList<>();
+                    String groupId = null;
                     double totalQuota = 0.0;
 
                     for (ServiceBucketInfo bucket : serviceBuckets) {
                         double currentBalance = bucket.getCurrentBalance();
                         totalQuota += currentBalance;
-                        balanceList.add(createBalance(bucket));
+                        if (!Objects.equals(request.username(), bucket.getBucketUser())) {
+                            balanceGroupList.add(MappingUtil.createBalance(bucket));
+                            groupId = bucket.getBucketUser();
+                        }else {
+                            balanceList.add(MappingUtil.createBalance(bucket));
+                        }
                     }
 
                     if (totalQuota <= 0) {
@@ -94,8 +98,13 @@ public class InterimHandler {
                                 AccountingResponseEvent.ResponseAction.DISCONNECT));
                     }
 
+
                      UserSessionData newUserSessionData =  UserSessionData.builder()
-                    .balance(balanceList).sessions(new ArrayList<>(List.of(createSession(request)))).build();
+                    .balance(balanceList)
+                             .sessions(new ArrayList<>(List.of(createSession(request))))
+                             .userName(request.username())
+                             .groupId(groupId)
+                             .build();
 
                      return processAccountingRequest(newUserSessionData, request,traceId);
 
@@ -103,68 +112,51 @@ public class InterimHandler {
     }
 
     private Uni<Void> processAccountingRequest(
-            UserSessionData userData, AccountingRequestDto request, String traceId) {
+            UserSessionData userData, AccountingRequestDto request,String traceId) {
         long startTime = System.currentTimeMillis();
         log.infof("Processing interim accounting request for user: %s, sessionId: %s",
                 request.username(), request.sessionId());
+
 
         Session session = findSession(userData, request.sessionId());
         if (session == null) {
             session = createSession(request);
         }
 
-        // Thread-safe session time check to prevent duplicate processing
-        final Session finalSession = session;
-        synchronized (finalSession) {
-            if (request.sessionTime() <= finalSession.getSessionTime()) {
-                log.debugf("Duplicate Session time unchanged for sessionId: %s. Request time: %d, Session time: %d",
-                        request.sessionId(), request.sessionTime(), finalSession.getSessionTime());
-                return Uni.createFrom().voidItem();
-            }
-        }
+        // Early return if session time hasn't increased
+        if (request.sessionTime() <= session.getSessionTime()) {
+            log.debugf("Duplicate Session time unchanged for sessionId: %s", request.sessionId());
+            return Uni.createFrom().voidItem();
 
-        // Continue processing with updated session
-        {
+        }else {
+           final Session finalSession = session;
             return accountingUtil.updateSessionAndBalance(userData, session, request,null)
                     .onItem().transformToUni(updateResult -> {  // Changed from transform to transformToUni
                         if (!updateResult.success()) {
                             log.warnf("update failed for sessionId: %s", request.sessionId());
                         }
-                        if(updateResult.newQuota()<=0){
-                          return stopHandler.stopProcessing(request, AccountingResponseEvent.EventType.COA,
-                                    AccountingResponseEvent.ResponseAction.DISCONNECT,updateResult.bucketId(),traceId);
+                        if(updateResult.newQuota()<=0 || !updateResult.previousUsageBucketId().equals(updateResult.balance().getBucketId())) {
+                          return stopHandler.stopProcessing(request
+                                    ,updateResult.bucketId(),traceId);
                         }
                         log.infof("Interim accounting processing time ms : %d",
                                 System.currentTimeMillis() - startTime);
-
-                        // Generate and send CDR event asynchronously (fire and forget)
-                        generateAndSendCDR(request, session);
-
+                        generateAndSendCDR(request, finalSession);
                         return Uni.createFrom().voidItem();
 
                     });
         }
     }
 
-    /**
-     * Thread-safe method to find a session by ID
-     *
-     * @param userData  User session data
-     * @param sessionId Session ID to find
-     * @return Session if found, null otherwise
-     */
     private Session findSession(UserSessionData userData, String sessionId) {
         List<Session> sessions = userData.getSessions();
-        synchronized (sessions) {
-            for (Session session : sessions) {
-                if (session.getSessionId().equals(sessionId)) {
-                    return session;
-                }
+        for (Session session : sessions) {
+            if (session.getSessionId().equals(sessionId)) {
+                return session;
             }
-            return null;
         }
+        return null;
     }
-
 
 
     private Session createSession(AccountingRequestDto request) {
@@ -172,7 +164,6 @@ public class InterimHandler {
                 request.sessionId(),
                 LocalDateTime.now(),
                 null,
-                "",
                 request.sessionTime() - 1,
                 0L,
                 request.framedIPAddress(),
@@ -181,28 +172,12 @@ public class InterimHandler {
         );
     }
 
-    private Balance createBalance(ServiceBucketInfo bucket) {
-        Balance balance = new Balance();
-        balance.setBucketId(bucket.getBucketId());
-        balance.setServiceId(bucket.getServiceId());
-        balance.setServiceExpiry(bucket.getExpiryDate());
-        balance.setPriority(bucket.getPriority());
-        balance.setQuota(bucket.getCurrentBalance());
-        balance.setInitialBalance(bucket.getInitialBalance());
-        balance.setServiceStartDate(bucket.getServiceStartDate());
-        balance.setServiceStatus(bucket.getStatus());
-        return balance;
-    }
 
-    /**
-     * Generates and sends CDR event asynchronously
-     * This is a fire-and-forget operation that won't block the main processing flow
-     */
     private void generateAndSendCDR(AccountingRequestDto request, Session session) {
         try {
             AccountingCDREvent cdrEvent = CdrMappingUtil.buildInterimCDREvent(request, session);
 
-            // Fire and forget - run asynchronously without blocking
+            // run asynchronously without blocking
             accountProducer.produceAccountingCDREvent(cdrEvent)
                     .subscribe()
                     .with(
@@ -213,5 +188,6 @@ public class InterimHandler {
             log.errorf(e, "Error building CDR event for session: %s", request.sessionId());
         }
     }
+
 
 }

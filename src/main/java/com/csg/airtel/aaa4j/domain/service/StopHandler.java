@@ -1,7 +1,7 @@
 package com.csg.airtel.aaa4j.domain.service;
 
 import com.csg.airtel.aaa4j.domain.model.*;
-import com.csg.airtel.aaa4j.domain.model.cdr.*;
+import com.csg.airtel.aaa4j.domain.model.cdr.AccountingCDREvent;
 import com.csg.airtel.aaa4j.domain.model.session.Balance;
 import com.csg.airtel.aaa4j.domain.model.session.Session;
 import com.csg.airtel.aaa4j.domain.model.session.UserSessionData;
@@ -12,7 +12,6 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -25,7 +24,6 @@ public class StopHandler {
 
     private static final Logger log = Logger.getLogger(StopHandler.class);
 
-
     private final CacheClient cacheUtil;
     private final AccountProducer accountProducer;
     private final AccountingUtil accountingUtil;
@@ -37,14 +35,14 @@ public class StopHandler {
         this.accountingUtil = accountingUtil;
     }
 
-    public Uni<Void> stopProcessing(AccountingRequestDto request, AccountingResponseEvent.EventType eventType,AccountingResponseEvent.ResponseAction action,String bucketId,String traceId) {
+    public Uni<Void> stopProcessing(AccountingRequestDto request,String bucketId,String traceId) {
         log.infof("[traceId: %s] Processing accounting stop for user: %s, sessionId: %s",
                 traceId, request.username(), request.sessionId());
         return cacheUtil.getUserData(request.username())
                 .onItem().invoke(() -> log.infof("[traceId: %s] User data retrieved for user: %s", request.username()))
                 .onItem().transformToUni(userSessionData ->
                         userSessionData != null ?
-                                 processAccountingStop(userSessionData, request,bucketId).invoke(() -> log.infof("[traceId: %s] Completed processing for eventType=%s, action=%s, bucketId=%s", traceId,eventType, action, bucketId)): null
+                                 processAccountingStop(userSessionData, request,bucketId).invoke(() -> log.infof("[traceId: %s] Completed processing for eventType=%s, action=%s, bucketId=%s", traceId, bucketId)): null
                 )
                 .onFailure().recoverWithUni(throwable -> {
                     log.errorf(throwable, "Error processing accounting for user: %s", request.username());
@@ -53,14 +51,13 @@ public class StopHandler {
     }
 
     public Uni<Void> processAccountingStop(
-            UserSessionData userSessionData, AccountingRequestDto request, String bucketId) {
+            UserSessionData userSessionData,AccountingRequestDto request
+            ,String bucketId) {
 
-        // Thread-safe session list check
-        synchronized (userSessionData.getSessions()) {
-            if (userSessionData.getSessions() == null || userSessionData.getSessions().isEmpty()) {
-                log.infof("[traceId: %s] No active sessions found for user: %s", request.username());
-                return Uni.createFrom().voidItem();
-            }
+        if (userSessionData.getSessions() == null || userSessionData.getSessions().isEmpty()) {
+            log.infof("[traceId: %s] No active sessions found for user: %s", request.username());
+            return Uni.createFrom().voidItem();
+
         }
 
         Session session = findSessionById(userSessionData.getSessions(), request.sessionId());
@@ -90,18 +87,7 @@ public class StopHandler {
                             );
 
                 })
-                .invoke(() -> {
-                    // Generate and send CDR event asynchronously (fire and forget)
-                    generateAndSendCDR(request, session);
-                })
-                .invoke(() -> {
-                    // Thread-safe session removal
-                    synchronized (userSessionData.getSessions()) {
-                        userSessionData.getSessions().remove(session);
-                        log.infof("Session removed for user: %s, sessionId: %s. Remaining sessions: %d",
-                                request.username(), request.sessionId(), userSessionData.getSessions().size());
-                    }
-                })
+                .invoke(() -> userSessionData.getSessions().remove(session))
                 .call(() -> {
                     log.infof("[traceId: %s] Updating cache for user: %s", request.username());
                     // Update cache
@@ -112,6 +98,10 @@ public class StopHandler {
                             )
                             .onFailure().recoverWithNull(); // Cache failure can still be swallowed
                 })
+                .invoke(() ->
+                    //send CDR event asynchronously
+                    generateAndSendCDR(request, session)
+                )
                 .invoke(() -> {
                     if (log.isDebugEnabled()) {
                         log.debugf("Session and balance cleaned for session: %s", request.sessionId());
@@ -124,22 +114,13 @@ public class StopHandler {
                 });
     }
 
-    /**
-     * Thread-safe method to find a session by ID
-     *
-     * @param sessions  List of sessions
-     * @param sessionId Session ID to find
-     * @return Session if found, null otherwise
-     */
     private Session findSessionById(List<Session> sessions, String sessionId) {
-        synchronized (sessions) {
-            for (Session session : sessions) {
-                if (session.getSessionId().equals(sessionId)) {
-                    return session;
-                }
+        for (Session session : sessions) {
+            if (session.getSessionId().equals(sessionId)) {
+                return session;
             }
-            return null;
         }
+        return null;
     }
 
 
@@ -193,15 +174,11 @@ public class StopHandler {
         return dbWriteRequest;
     }
 
-    /**
-     * Generates and sends CDR event asynchronously
-     * This is a fire-and-forget operation that won't block the main processing flow
-     */
     private void generateAndSendCDR(AccountingRequestDto request, Session session) {
         try {
             AccountingCDREvent cdrEvent = CdrMappingUtil.buildStopCDREvent(request, session);
 
-            // Fire and forget - run asynchronously without blocking
+            // run asynchronously without blocking
             accountProducer.produceAccountingCDREvent(cdrEvent)
                     .subscribe()
                     .with(

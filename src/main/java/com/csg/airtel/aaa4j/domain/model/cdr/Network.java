@@ -13,12 +13,6 @@ public class Network {
     @JsonProperty("framedIpAddress")
     private String framedIpAddress;
 
-    @JsonProperty("framedProtocol")
-    private String framedProtocol;
-
-    @JsonProperty("serviceType")
-    private String serviceType;
-
     @JsonProperty("calledStationId")
     private String calledStationId;
 }

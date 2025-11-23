@@ -6,8 +6,6 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.LocalDateTime;
-import java.util.Objects;
-
 @Getter
 @Setter
 @AllArgsConstructor
@@ -15,24 +13,10 @@ import java.util.Objects;
 public class Session {
     private String sessionId;
     private LocalDateTime sessionInitiatedTime;
-    private String lastAccountingIdentificationId;
-    private String status;  // FUP applied or not
+    private String previousUsageBucketId;
     private Integer sessionTime;
     private Long previousTotalUsageQuotaValue;
     private String framedId;
     private String nasIp;
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Session session = (Session) o;
-        return Objects.equals(sessionId, session.sessionId);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(sessionId);
-    }
 
 }

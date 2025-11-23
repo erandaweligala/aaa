@@ -18,7 +18,8 @@ public record AccountingRequestDto(
         @JsonProperty("framedIPAddress") String framedIPAddress,
         @JsonProperty("delayTime") Integer delayTime,
         @JsonProperty("inputGigaWords") Integer inputGigaWords,
-        @JsonProperty("outputGigaWords") Integer outputGigaWords
+        @JsonProperty("outputGigaWords") Integer outputGigaWords,
+        @JsonProperty("nasIdentifier") String nasIdentifier
 ) {
     public enum ActionType {
         START,

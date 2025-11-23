@@ -12,7 +12,7 @@ import lombok.*;
 public  class Payload {
 
     @JsonProperty("session")
-    private Session session;
+    private SessionCdr session;
 
     @JsonProperty("user")
     private User user;

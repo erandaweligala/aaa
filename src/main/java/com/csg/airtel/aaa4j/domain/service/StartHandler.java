@@ -3,8 +3,8 @@ package com.csg.airtel.aaa4j.domain.service;
 
 import com.csg.airtel.aaa4j.domain.model.AccountingRequestDto;
 import com.csg.airtel.aaa4j.domain.model.AccountingResponseEvent;
-import com.csg.airtel.aaa4j.domain.model.EventTypes;
 import com.csg.airtel.aaa4j.domain.model.ServiceBucketInfo;
+
 import com.csg.airtel.aaa4j.domain.model.cdr.*;
 import com.csg.airtel.aaa4j.domain.model.session.Balance;
 import com.csg.airtel.aaa4j.domain.model.session.Session;
@@ -18,11 +18,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
+import java.util.Objects;
 
 
 @ApplicationScoped
@@ -75,54 +74,176 @@ public class StartHandler {
     private Uni<Void> handleExistingUserSession(
             AccountingRequestDto request,
             UserSessionData userSessionData) {
+//
+//        double availableBalance = calculateAvailableBalance(userSessionData.getBalance());
+//        if (availableBalance <= 0) {
+//            log.warnf("[traceId: %s] User: %s has exhausted their data balance. Cannot start new session.",
+//                    request.username());
+//           return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "Data balance exhausted",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
+//
+//        }
+//        boolean sessionExists = userSessionData.getSessions()
+//                .stream()
+//                .anyMatch(session -> session.getSessionId().equals(request.sessionId()));
+//
+//        if (sessionExists) {
+//            log.infof("[traceId: %s] Session already exists for user: %s, sessionId: %s",
+//                    request.username(), request.sessionId());
+//            return Uni.createFrom().voidItem();
+//        }
+//
+//        // Add new session and update cache
+//        Session newSession = createSession(request);
+//        userSessionData.getSessions().add(newSession);
+//
+//        return utilCache.updateUserAndRelatedCaches(request.username(), userSessionData)
+//                .onItem().transformToUni(unused -> {
+//                    log.infof("[traceId: %s] New session added for user: %s, sessionId: %s",
+//                            request.username(), request.sessionId());
+//                    return Uni.createFrom().voidItem();
+//                })
+//                .invoke(() -> {
+//                    log.infof("cdr write event started for user: %s", request.username());
+//                    // Send CDR event asynchronously
+//                    generateAndSendCDR(request, newSession);
+//                })
+//                .onFailure().recoverWithUni(throwable -> {
+//                    log.errorf(throwable, "Failed to update cache for user: %s", request.username());
+//                    return Uni.createFrom().voidItem();
+//                });
 
-        // Thread-safe balance calculation
-        double availableBalance = calculateAvailableBalance(userSessionData.getBalance());
+        // Declare balanceListUni outside the if block
+        Uni<List<Balance>> balanceListUni;
 
-        if (availableBalance <= 0) {
-            log.warnf("[traceId: %s] User: %s has exhausted their data balance. Cannot start new session.",
-                    request.username());
-           return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "Data balance exhausted",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
-
+        if (!Objects.equals(userSessionData.getGroupId(), "1")) {
+            balanceListUni = utilCache.getUserData(userSessionData.getGroupId())
+                    .onItem()
+                    .transform(UserSessionData::getBalance);
+        } else {
+            // Use the user's own balance list if groupId is "1"
+            balanceListUni = Uni.createFrom().item(userSessionData.getBalance());
         }
 
-        // Thread-safe session existence check
-        boolean sessionExists;
-        synchronized (userSessionData.getSessions()) {
-            sessionExists = userSessionData.getSessions()
+        // Chain the balance calculation to handle the asynchronous Uni
+        return balanceListUni.onItem().transformToUni(balanceList -> {
+            // Combine user's balance with the additional balance list
+            List<Balance> combinedBalances = new ArrayList<>(userSessionData.getBalance());
+            if (balanceList != null && !balanceList.isEmpty()) {
+                combinedBalances.addAll(balanceList);
+            }
+
+            double availableBalance = calculateAvailableBalance(combinedBalances);
+
+            if (availableBalance <= 0) {
+                log.warnf("[traceId: %s] User: %s has exhausted their data balance. Cannot start new session.",
+                        request.username());
+                return accountProducer.produceAccountingResponseEvent(
+                        MappingUtil.createResponse(request, "Data balance exhausted",
+                                AccountingResponseEvent.EventType.COA,
+                                AccountingResponseEvent.ResponseAction.DISCONNECT));
+            }
+
+            boolean sessionExists = userSessionData.getSessions()
                     .stream()
                     .anyMatch(session -> session.getSessionId().equals(request.sessionId()));
-        }
 
-        if (sessionExists) {
-            log.infof("[traceId: %s] Session already exists for user: %s, sessionId: %s",
-                    request.username(), request.sessionId());
-            return Uni.createFrom().voidItem();
-        }
+            if (sessionExists) {
+                log.infof("[traceId: %s] Session already exists for user: %s, sessionId: %s",
+                        request.username(), request.sessionId());
+                return Uni.createFrom().voidItem();
+            }
 
-        // Add new session with thread-safe operation
-        Session newSession = createSession(request);
-
-        // Thread-safe addition to session list
-        synchronized (userSessionData.getSessions()) {
+            // Add new session and update cache
+            Session newSession = createSession(request);
             userSessionData.getSessions().add(newSession);
-        }
 
-        return utilCache.updateUserAndRelatedCaches(request.username(), userSessionData)
-                .onItem().transformToUni(unused -> {
-                    log.infof("[traceId: %s] New session added for user: %s, sessionId: %s",
-                            request.username(), request.sessionId());
-                    return Uni.createFrom().voidItem();
-                })
-                .invoke(() -> {
-                    // Generate and send CDR event asynchronously (fire and forget)
-                    generateAndSendCDR(request, newSession);
-                })
-                .onFailure().recoverWithUni(throwable -> {
-                    log.errorf(throwable, "Failed to update cache for user: %s", request.username());
-                    return Uni.createFrom().voidItem();
-                });
+            return utilCache.updateUserAndRelatedCaches(request.username(), userSessionData)
+                    .onItem().transformToUni(unused -> {
+                        log.infof("[traceId: %s] New session added for user: %s, sessionId: %s",
+                                request.username(), request.sessionId());
+                        return Uni.createFrom().voidItem();
+                    })
+                    .invoke(() -> {
+                        log.infof("cdr write event started for user: %s", request.username());
+                        // Send CDR event asynchronously
+                        generateAndSendCDR(request, newSession);
+                    })
+                    .onFailure().recoverWithUni(throwable -> {
+                        log.errorf(throwable, "Failed to update cache for user: %s", request.username());
+                        return Uni.createFrom().voidItem();
+                    });
+        });
+
     }
+
+//    private Uni<Void> handleNewUserSession(AccountingRequestDto request) {
+//        log.infof("No existing session data found for user: %s. Creating new session data.",
+//                request.username());
+//
+//        return userRepository.getServiceBucketsByUserName(request.username())
+//                .onItem().transformToUni(serviceBuckets -> {
+//                    if (serviceBuckets == null || serviceBuckets.isEmpty()) {
+//                        log.warnf("traceId: %s No service buckets found for user: %s. Cannot create session data.",
+//                                request.username());
+//                      return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "No service buckets found",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
+//
+//                    }
+//                    double totalQuota = 0.0;
+//                    List<Balance> balanceList = new ArrayList<>(serviceBuckets.size());
+//                    List<Balance> balanceGroupList = new ArrayList<>(serviceBuckets.size());
+//                    UserSessionData newUserGroupSessionData = new UserSessionData();
+//                    for (ServiceBucketInfo bucket : serviceBuckets) {
+//                        if(!Objects.equals(request.username(), bucket.getBucketUser())){
+//
+//                            Balance balance = MappingUtil.createBalance(bucket);
+//                            balanceGroupList.add(balance);
+//                            totalQuota += bucket.getCurrentBalance();
+//
+//                        }else {
+//                            Balance balance = MappingUtil.createBalance(bucket);
+//                            balanceList.add(balance);
+//                            totalQuota += bucket.getCurrentBalance();
+//                        }
+//                    }
+//
+//                    if(!balanceGroupList.isEmpty()){
+//                        return utilCache.storeUserData(request.username(), newUserGroupSessionData)
+//                                .onItem().transformToUni(unused -> {
+//                                    log.infof("New user session data created and stored for user: %s",
+//                                            request.username());
+//                                    //only if condiction execute no returns
+//                                });
+//                    }
+//
+//                    if (totalQuota <= 0) {
+//                        log.warnf("[traceId: %s] User: %s has zero total data quota. Cannot create session data.",
+//                                request.username());
+//                        return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "Data quota is zero",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
+//                    }
+//
+//                    UserSessionData newUserSessionData = new UserSessionData();
+//                    Session session = createSession(request);
+//                    newUserSessionData.setSessions(new ArrayList<>(List.of(session)));
+//                    newUserSessionData.setBalance(balanceList);
+//
+//                    return utilCache.storeUserData(request.username(), newUserSessionData)
+//                            .onItem().transformToUni(unused -> {
+//                                log.infof("New user session data created and stored for user: %s",
+//                                        request.username());
+//                                return Uni.createFrom().voidItem();
+//                            })
+//                            .invoke(() -> {
+//                                // send CDR event asynchronously
+//                                log.infof("cdr write event started for user: %s", request.username());
+//                                generateAndSendCDR(request, session);
+//                            });
+//                })
+//                .onFailure().recoverWithUni(throwable -> {
+//                    log.errorf(throwable, "[traceId: %s] Error creating new user session for user: %s",
+//                            request.username());
+//                    return Uni.createFrom().voidItem();
+//                });
+//    }
 
     private Uni<Void> handleNewUserSession(AccountingRequestDto request) {
         log.infof("No existing session data found for user: %s. Creating new session data.",
@@ -131,61 +252,106 @@ public class StartHandler {
         return userRepository.getServiceBucketsByUserName(request.username())
                 .onItem().transformToUni(serviceBuckets -> {
                     if (serviceBuckets == null || serviceBuckets.isEmpty()) {
-                        log.warnf("[traceId: %s] No service buckets found for user: %s. Cannot create session data.",
+                        log.warnf("No service buckets found for user: %s. Cannot create session data.",
                                 request.username());
-                      return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "No service buckets found",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
-
+                        return accountProducer.produceAccountingResponseEvent(
+                                        MappingUtil.createResponse(request, "No service buckets found",
+                                                AccountingResponseEvent.EventType.COA,
+                                                AccountingResponseEvent.ResponseAction.DISCONNECT))
+                                .replaceWithVoid();
                     }
+
                     double totalQuota = 0.0;
                     List<Balance> balanceList = new ArrayList<>(serviceBuckets.size());
+                    List<Balance> balanceGroupList = new ArrayList<>();
+                    String groupId = null;
 
                     for (ServiceBucketInfo bucket : serviceBuckets) {
-                        Balance balance = createBalance(bucket);
-                        balanceList.add(balance);
+                        Balance balance = MappingUtil.createBalance(bucket);
+
+                        if (!Objects.equals(request.username(), bucket.getBucketUser())) {
+                            balanceGroupList.add(balance);
+                            groupId = bucket.getBucketUser();
+                        } else {
+                            balanceList.add(balance);
+                        }
                         totalQuota += bucket.getCurrentBalance();
                     }
 
+                    // Check quota early to fail fast
                     if (totalQuota <= 0) {
-                        log.warnf("[traceId: %s] User: %s has zero total data quota. Cannot create session data.",
+                        log.warnf("User: %s has zero total data quota. Cannot create session data.",
                                 request.username());
-                        return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "Data quota is zero",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
+                        return accountProducer.produceAccountingResponseEvent(
+                                        MappingUtil.createResponse(request, "Data quota is zero",
+                                                AccountingResponseEvent.EventType.COA,
+                                                AccountingResponseEvent.ResponseAction.DISCONNECT))
+                                .replaceWithVoid();
                     }
 
+                    // Create regular user session
                     UserSessionData newUserSessionData = new UserSessionData();
+                    newUserSessionData.setGroupId(groupId);
+                    newUserSessionData.setUserName(request.username());
                     Session session = createSession(request);
                     newUserSessionData.setSessions(new ArrayList<>(List.of(session)));
                     newUserSessionData.setBalance(balanceList);
 
-                    return utilCache.storeUserData(request.username(), newUserSessionData)
-                            .onItem().transformToUni(unused -> {
-                                log.infof("New user session data created and stored for user: %s",
-                                        request.username());
-                                return Uni.createFrom().voidItem();
-                            })
-                            .invoke(() -> {
-                                // Generate and send CDR event asynchronously (fire and forget)
-                                generateAndSendCDR(request, session);
-                            });
+                    // Prepare storage operations
+                    Uni<Void> userStorageUni = utilCache.storeUserData(request.username(), newUserSessionData)
+                            .onItem().invoke(unused ->
+                                    log.infof("New user session data created and stored for user: %s", request.username()))
+                            .replaceWithVoid();
+
+
+                    // Handle group storage in parallel if needed
+                    if (!balanceGroupList.isEmpty()) {
+                        UserSessionData groupSessionData = new UserSessionData();
+                        groupSessionData.setBalance(balanceGroupList);
+                       final String finalGroupId = groupId;
+//                        Uni<Void> groupStorageUni = utilCache.storeUserData(finalGroupId, groupSessionData)
+//                                .onItem().invoke(unused ->
+//                                        log.infof("Group session data stored for groupId: %s", finalGroupId))
+//                                .onFailure().invoke(failure ->
+//                                        log.errorf(failure, "Failed to store group data for groupId: %s", finalGroupId))
+//                                .replaceWithVoid();
+
+                        Uni<Void> groupStorageUni = utilCache.getUserData(groupId)
+                                .chain(existingData -> {
+                                    if (existingData == null) {
+                                        // Store new data if null
+                                        return utilCache.storeUserData(finalGroupId, groupSessionData)
+                                                .onItem().invoke(unused -> log.infof("Group session data stored for groupId: %s", finalGroupId))
+                                                .onFailure().invoke(failure -> log.errorf(failure, "Failed to store group data for groupId: %s", finalGroupId));
+                                    } else {
+                                        // Data already exists, skip storage
+                                        log.infof("Group session data already exists for groupId: %s", finalGroupId);
+                                        return Uni.createFrom().voidItem();
+                                    }
+                                });
+
+                        // Execute both storage operations in parallel
+                        userStorageUni = Uni.combine().all().unis(userStorageUni, groupStorageUni)
+                                .discardItems();
+                    }
+
+                    // Send CDR event asynchronously (fire and forget) after user storage
+                    return userStorageUni.onItem().invoke(unused -> {
+                        log.infof("CDR write event started for user: %s", request.username());
+                        generateAndSendCDR(request, session);
+                    });
                 })
                 .onFailure().recoverWithUni(throwable -> {
-                    log.errorf(throwable, "[traceId: %s] Error creating new user session for user: %s",
+                    log.errorf(throwable, "Error creating new user session for user: %s",
                             request.username());
                     return Uni.createFrom().voidItem();
                 });
     }
 
-    /**
-     * Thread-safe method to calculate available balance across all buckets
-     *
-     * @param balanceList List of balances
-     * @return Total available quota
-     */
     private double calculateAvailableBalance(List<Balance> balanceList) {
-        synchronized (balanceList) {
-            return balanceList.stream()
-                    .mapToDouble(Balance::getQuota)
-                    .sum();
-        }
+        return balanceList.stream()
+                .mapToDouble(Balance::getQuota)
+                .sum();
     }
 
     private Session createSession(AccountingRequestDto request) {
@@ -193,7 +359,6 @@ public class StartHandler {
                 request.sessionId(),
                 LocalDateTime.now(),
                 null,
-                "",
                 0,
                 0L,
                 request.framedIPAddress(),
@@ -201,28 +366,11 @@ public class StartHandler {
         );
     }
 
-    private Balance createBalance(ServiceBucketInfo bucket) {
-        Balance balance = new Balance();
-        balance.setBucketId(bucket.getBucketId());
-        balance.setServiceId(bucket.getServiceId());
-        balance.setServiceExpiry(bucket.getExpiryDate());
-        balance.setPriority(bucket.getPriority());
-        balance.setQuota(bucket.getCurrentBalance());
-        balance.setInitialBalance(bucket.getInitialBalance());
-        balance.setServiceStartDate(bucket.getServiceStartDate());
-        balance.setServiceStatus(bucket.getStatus());
-        return balance;
-    }
-
-    /**
-     * Generates and sends CDR event asynchronously
-     * This is a fire-and-forget operation that won't block the main processing flow
-     */
     private void generateAndSendCDR(AccountingRequestDto request, Session session) {
         try {
             AccountingCDREvent cdrEvent = CdrMappingUtil.buildStartCDREvent(request, session);
 
-            // Fire and forget - run asynchronously without blocking
+            // run asynchronously without blocking
             accountProducer.produceAccountingCDREvent(cdrEvent)
                     .subscribe()
                     .with(
@@ -233,5 +381,7 @@ public class StartHandler {
             log.errorf(e, "Error building CDR event for session: %s", request.sessionId());
         }
     }
+
+
 
 }

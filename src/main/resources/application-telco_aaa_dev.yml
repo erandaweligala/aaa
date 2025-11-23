@@ -1,7 +1,9 @@
 # Server Configuration
 quarkus:
   http:
+    root-path: /api/v1
     port: 9905
+
 
   datasource:
     db-kind: oracle
@@ -12,6 +14,20 @@ quarkus:
       max-size: 20
       idle-timeout: PT10M
 
+  vertx:
+    event-loops-pool-size: 32
+    warning-exception-time: 10s
+    max-event-loop-execute-time: 5s
+    max-worker-execute-time: 60s
+    prefer-native-transport: true
+    caching: true
+
+  thread-pool:
+    core-threads: 50
+    max-threads: 200
+    queue-size: 2000
+    growth-resistance: 0
+    shutdown-timeout: 30s
   #  datasource:
   #    db-kind: oracle
   #    username: system
@@ -21,32 +37,27 @@ quarkus:
   #      max-size: 20
   #      idle-timeout: PT10M
 
-  log:
-    console:
-      format: "%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{3.}] (%t) %s%e%n"
-    level: INFO
-    category:
-      "org.apache.kafka":
-        level: WARN
-      "io.smallrye.reactive.messaging.kafka":
-        level: INFO
+log:
+  file:
+   enable: true
+   path: /var/log/dte
+   level: INFO
+   format: "%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{3.}] (%t) %s%e%n"
   console:
-    color: true
+    format: "%d{yyyy-MM-dd HH:mm:ss,SSS} %-5p [%c{3.}] (%t) %s%e%n"
+  level: INFO
+  category:
+    "org.apache.kafka":
+      level: WARN
+    "io.smallrye.reactive.messaging.kafka":
+      level: DEBUG
+    "io.quarkus.config":
+      level: DEBUG
+    "io.smallrye.config":
+      level: DEBUG
+console:
+  color: true
 
-  vertx:
-    event-loops-pool-size: 16
-    warning-exception-time: 10s
-    max-event-loop-execute-time: 5s
-    max-worker-execute-time: 60s
-    prefer-native-transport: true
-    caching: false
-
-  thread-pool:
-    core-threads: 20
-    max-threads: 100
-    queue-size: 1000
-    growth-resistance: 0
-    shutdown-timeout: 30s
 
   redis:
     hosts: http://redis.redis.svc.cluster.local:6379
@@ -76,6 +87,18 @@ mp:
       accounting-resp-events:
         connector: smallrye-kafka
         topic: accounting-response
+        value.serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+        key.serializer: org.apache.kafka.common.serialization.StringSerializer
+        acks: all
+        retries: 3
+        max.in.flight.requests.per.connection: 5
+        compression.type: snappy
+        batch.size: 16384
+        linger.ms: 10
+
+      accounting-cdr-events:
+        connector: smallrye-kafka
+        topic: cdr-event
         value.serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
         key.serializer: org.apache.kafka.common.serialization.StringSerializer
         acks: all
