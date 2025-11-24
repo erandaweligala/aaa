@@ -164,8 +164,6 @@ public class AccountingUtil {
         UpdateResult result = UpdateResult.success(newQuota, foundBalance.getBucketId(), foundBalance, previousUsageBucketId);
 
         if (shouldDisconnectSession(result, foundBalance, previousUsageBucketId)) {
-
-            // todo implement to code clear all sessions and session related sen COA and update foundbalance.bucketId newquota trigger DB event update
             return handleSessionDisconnect(userData, request, foundBalance, result);
         }
 
@@ -260,15 +258,16 @@ public class AccountingUtil {
             userData.getBalance().remove(foundBalance);
         }
 
-        return updateCOASessionForDisconnect(userData, request.sessionId(), request.username())
+        // Clear all sessions and send COA disconnect for all sessions
+        return clearAllSessionsAndSendCOA(userData, request.username())
+                .chain(() -> updateBalanceInDatabase(foundBalance, result.newQuota(), request.sessionId(), request.username()))
                 .invoke(() -> {
-                    log.infof("Successfully updated COA Disconnect session: %s", request.sessionId());
-                    userData.getSessions().removeIf(session ->
-                            !session.getSessionId().equals(request.sessionId()));
+                    log.infof("Successfully cleared all sessions and updated balance for user: %s", request.username());
+                    userData.getSessions().clear(); // Clear all sessions from userData
                 })
                 .chain(() -> cacheClient.updateUserAndRelatedCaches(request.username(), userData))
                 .onFailure().invoke(err ->
-                        log.errorf(err, "Error updating cache COA Disconnect for user: %s", request.username()))
+                        log.errorf(err, "Error clearing sessions and updating balance for user: %s", request.username()))
                 .replaceWith(result);
     }
 
@@ -354,6 +353,68 @@ public class AccountingUtil {
                 .collect().asList()
                 .ifNoItem().after(Duration.ofSeconds(45)).fail()
                 .replaceWithVoid();
+    }
+
+    /**
+     * Clear all sessions and send COA disconnect for all sessions (including current session)
+     * @param userSessionData user session data containing all sessions
+     * @param username username
+     * @return Uni<Void>
+     */
+    private Uni<Void> clearAllSessionsAndSendCOA(UserSessionData userSessionData, String username) {
+        return Multi.createFrom().iterable(userSessionData.getSessions())
+                .onItem().transformToUniAndConcatenate(
+                        session -> accountProducer.produceAccountingResponseEvent(
+                                        MappingUtil.createResponse(
+                                                session.getSessionId(),
+                                                "Disconnect",
+                                                session.getNasIp(),
+                                                session.getFramedId(),
+                                                username
+                                        )
+                                )
+                                .onFailure().retry()
+                                .withBackOff(Duration.ofMillis(100), Duration.ofSeconds(2))
+                                .atMost(2)
+                                .onFailure().invoke(failure ->
+                                        log.errorf(failure, "Failed to produce disconnect event for session: %s", session.getSessionId())
+                                )
+                                .onFailure().recoverWithNull()
+                )
+                .collect().asList()
+                .ifNoItem().after(Duration.ofSeconds(45)).fail()
+                .replaceWithVoid();
+    }
+
+    /**
+     * Update balance in database with new quota and trigger DB event
+     * @param balance balance to update
+     * @param newQuota new quota value
+     * @param sessionId session ID
+     * @param userName username
+     * @return Uni<Void>
+     */
+    private Uni<Void> updateBalanceInDatabase(Balance balance, long newQuota, String sessionId, String userName) {
+        Map<String, Object> columnValues = new HashMap<>();
+        Map<String, Object> whereConditions = new HashMap<>();
+
+        // Update balance with new quota
+        balance.setQuota(Math.max(newQuota, 0));
+
+        populateColumnValues(columnValues, balance);
+        populateWhereConditions(whereConditions, balance);
+
+        DBWriteRequest dbWriteRequest = buildDBWriteRequest(
+                sessionId,
+                columnValues,
+                whereConditions,
+                userName
+        );
+
+        return accountProducer.produceDBWriteEvent(dbWriteRequest)
+                .onFailure().invoke(throwable ->
+                        log.errorf(throwable, "Failed to produce DB write event for balance update, session: %s", sessionId)
+                );
     }
 
     private long calculateTotalOctets(long octets, long gigawords) {
