@@ -108,104 +108,177 @@ public class AccountingUtil {
     public Uni<UpdateResult> updateSessionAndBalance(
             UserSessionData userData,
             Session sessionData,
-            AccountingRequestDto request,String bucketId) {
+            AccountingRequestDto request,
+            String bucketId) {
 
-        //todo need to this method simplify and improve peformance
+        long totalUsage = calculateTotalUsage(request);
 
-        long totalGigaWords =(long) request.outputGigaWords() + (long) request.inputGigaWords();
+        return getCombinedBalances(userData.getGroupId(), userData.getBalance())
+                .onItem().transformToUni(combinedBalances ->
+                        findBalanceWithHighestPriority(combinedBalances, bucketId)
+                                .onItem().transformToUni(foundBalance ->
+                                        processBalanceUpdate(userData, sessionData, request, foundBalance, combinedBalances, totalUsage)
+                                )
+                );
+    }
 
+    private long calculateTotalUsage(AccountingRequestDto request) {
+        long totalGigaWords = (long) request.outputGigaWords() + (long) request.inputGigaWords();
         long totalOctets = (long) request.inputOctets() + (long) request.outputOctets();
+        return calculateTotalOctets(totalOctets, totalGigaWords);
+    }
 
-        long totalUsage = calculateTotalOctets(totalOctets, totalGigaWords);
-
-        return getGroupBucket(userData.getGroupId())
-                .onItem()
-                .transformToUni(balanceList -> {
-                    List<Balance> combinedBalances = new ArrayList<>(userData.getBalance());
-                    if (balanceList != null && !balanceList.isEmpty()) {
-                        combinedBalances.addAll(balanceList);
+    private Uni<List<Balance>> getCombinedBalances(String groupId, List<Balance> userBalances) {
+        return getGroupBucket(groupId)
+                .onItem().transform(groupBalances -> {
+                    List<Balance> combined = new ArrayList<>(userBalances);
+                    if (groupBalances != null && !groupBalances.isEmpty()) {
+                        combined.addAll(groupBalances);
                     }
-                    return findBalanceWithHighestPriority(combinedBalances,bucketId)
-                            .onItem().transformToUni(foundBalance -> {
-
-                                if (foundBalance == null) {
-                                    log.warnf("No valid balance found for user: %s", request.username());
-                                    return Uni.createFrom().item(UpdateResult.failure("error"));
-                                }
-                                String previousUsageBucketId = getString(sessionData, foundBalance);
-                                 long newQuota = 0L;
-                                // If bucket has changed, update the previous bucket's quota with usage delta
-                                if (!previousUsageBucketId.equals(foundBalance.getBucketId())) {
-                                    log.infof("Bucket changed from %s to %s for session: %s",
-                                            previousUsageBucketId, foundBalance.getBucketId(), request.sessionId());
-
-                                    // Find and update the previous bucket
-                                    Balance previousBalance = findBalanceByBucketId(combinedBalances, previousUsageBucketId);
-                                    if (previousBalance != null) {
-                                        newQuota = getNewQuota(sessionData, previousBalance, totalUsage);
-                                        if (newQuota < 0) {
-                                            newQuota = 0;
-                                        }
-                                        previousBalance.setQuota(newQuota);
-                                        replaceInCollection(userData.getBalance(), previousBalance);
-                                        log.infof("Updated previous bucket %s quota to %d",
-                                                previousUsageBucketId, newQuota);
-                                    }
-                                }else {
-
-                                    newQuota = getNewQuota(sessionData, foundBalance, totalUsage);
-
-                                    if (newQuota <= 0) {
-                                        log.warnf("Quota depleted for session: %s", request.sessionId());
-                                        newQuota = 0;
-                                    }
-
-                                    foundBalance.setQuota(newQuota);
-                                    replaceInCollection(userData.getBalance(), foundBalance);
-                                    replaceInCollection(userData.getSessions(), sessionData);
-                                }
-
-                                sessionData.setPreviousTotalUsageQuotaValue(totalUsage);
-                                sessionData.setSessionTime(request.sessionTime());
-                                sessionData.setPreviousUsageBucketId(foundBalance.getBucketId());
-
-
-
-                                UpdateResult success = UpdateResult.success(newQuota, foundBalance.getBucketId(),foundBalance,previousUsageBucketId);
-                                if (success.newQuota() <= 0 || !(foundBalance.getBucketId().equals(previousUsageBucketId))) {
-
-                                    if(!foundBalance.getBucketUsername().equals(request.username())) {
-                                        userData.getBalance().remove(foundBalance);
-                                    }
-                                    // Handle disconnect: produce events, remove session, update cache, return result
-                                    return updateCOASessionForDisconnect(userData, request.sessionId(), request.username())
-                                            .invoke(() -> {
-                                                // Remove the current session after all disconnect events are produced
-                                                log.infof("Successfully updated COA Disconnect session: %s", request.sessionId());
-                                                userData.getSessions().removeIf(session ->
-                                                        !session.getSessionId().equals(request.sessionId()));
-                                            })
-                                            .chain(() -> cacheClient.updateUserAndRelatedCaches(request.username(), userData))
-                                            .onFailure().invoke(err ->
-                                                    log.errorf(err, "Error updating cache COA Disconnect for user: %s", request.username()))
-                                            .replaceWith(success);
-                                }
-
-                                return getUpdateResultUni(userData, request, foundBalance, success);
-
-                            });
+                    return combined;
                 });
-
-
     }
 
-    private static String getString(Session sessionData, Balance foundBalance) {
-        String previousUsageBucketId = sessionData.getPreviousUsageBucketId();
-        if(previousUsageBucketId == null){
-            previousUsageBucketId = foundBalance.getBucketId();
+    private Uni<UpdateResult> processBalanceUpdate(
+            UserSessionData userData,
+            Session sessionData,
+            AccountingRequestDto request,
+            Balance foundBalance,
+            List<Balance> combinedBalances,
+            long totalUsage) {
+
+        if (foundBalance == null) {
+            log.warnf("No valid balance found for user: %s", request.username());
+            return Uni.createFrom().item(UpdateResult.failure("error"));
         }
-        return previousUsageBucketId;
+
+        String previousUsageBucketId = getPreviousUsageBucketId(sessionData, foundBalance);
+        boolean bucketChanged = !previousUsageBucketId.equals(foundBalance.getBucketId());
+
+        long newQuota = updateQuotaForBucketChange(
+                userData, sessionData, foundBalance, combinedBalances,
+                previousUsageBucketId, bucketChanged, totalUsage
+        );
+
+        updateSessionData(sessionData, foundBalance, totalUsage, request.sessionTime());
+
+        UpdateResult result = UpdateResult.success(newQuota, foundBalance.getBucketId(), foundBalance, previousUsageBucketId);
+
+        if (shouldDisconnectSession(result, foundBalance, previousUsageBucketId)) {
+            return handleSessionDisconnect(userData, request, foundBalance, result);
+        }
+
+        return updateCacheForNormalOperation(userData, request, foundBalance, result);
     }
+
+    private String getPreviousUsageBucketId(Session sessionData, Balance foundBalance) {
+        String previousId = sessionData.getPreviousUsageBucketId();
+        return previousId != null ? previousId : foundBalance.getBucketId();
+    }
+
+    private long updateQuotaForBucketChange(
+            UserSessionData userData,
+            Session sessionData,
+            Balance foundBalance,
+            List<Balance> combinedBalances,
+            String previousUsageBucketId,
+            boolean bucketChanged,
+            long totalUsage) {
+
+        long newQuota;
+
+        if (bucketChanged) {
+            log.infof("Bucket changed from %s to %s for session: %s",
+                    previousUsageBucketId, foundBalance.getBucketId(), sessionData.getSessionId());
+
+            Balance previousBalance = findBalanceByBucketId(combinedBalances, previousUsageBucketId);
+            newQuota = updatePreviousBucketQuota(userData, sessionData, previousBalance, totalUsage);
+        } else {
+            newQuota = calculateAndUpdateCurrentBucketQuota(userData, sessionData, foundBalance, totalUsage);
+        }
+
+        return Math.max(newQuota, 0);
+    }
+
+    private long updatePreviousBucketQuota(
+            UserSessionData userData,
+            Session sessionData,
+            Balance previousBalance,
+            long totalUsage) {
+
+        if (previousBalance == null) {
+            return 0;
+        }
+
+        long newQuota = getNewQuota(sessionData, previousBalance, totalUsage);
+        previousBalance.setQuota(Math.max(newQuota, 0));
+        replaceInCollection(userData.getBalance(), previousBalance);
+
+        log.infof("Updated previous bucket %s quota to %d",
+                previousBalance.getBucketId(), previousBalance.getQuota());
+
+        return newQuota;
+    }
+
+    private long calculateAndUpdateCurrentBucketQuota(
+            UserSessionData userData,
+            Session sessionData,
+            Balance foundBalance,
+            long totalUsage) {
+
+        long newQuota = getNewQuota(sessionData, foundBalance, totalUsage);
+
+        if (newQuota <= 0) {
+            log.warnf("Quota depleted for session: %s", sessionData.getSessionId());
+        }
+
+        foundBalance.setQuota(Math.max(newQuota, 0));
+        replaceInCollection(userData.getBalance(), foundBalance);
+        replaceInCollection(userData.getSessions(), sessionData);
+
+        return newQuota;
+    }
+
+    private void updateSessionData(Session sessionData, Balance foundBalance, long totalUsage, Integer sessionTime) {
+        sessionData.setPreviousTotalUsageQuotaValue(totalUsage);
+        sessionData.setSessionTime(sessionTime);
+        sessionData.setPreviousUsageBucketId(foundBalance.getBucketId());
+    }
+
+    private boolean shouldDisconnectSession(UpdateResult result, Balance foundBalance, String previousUsageBucketId) {
+        return result.newQuota() <= 0 || !foundBalance.getBucketId().equals(previousUsageBucketId);
+    }
+
+    private Uni<UpdateResult> handleSessionDisconnect(
+            UserSessionData userData,
+            AccountingRequestDto request,
+            Balance foundBalance,
+            UpdateResult result) {
+
+        if (!foundBalance.getBucketUsername().equals(request.username())) {
+            userData.getBalance().remove(foundBalance);
+        }
+
+        return updateCOASessionForDisconnect(userData, request.sessionId(), request.username())
+                .invoke(() -> {
+                    log.infof("Successfully updated COA Disconnect session: %s", request.sessionId());
+                    userData.getSessions().removeIf(session ->
+                            !session.getSessionId().equals(request.sessionId()));
+                })
+                .chain(() -> cacheClient.updateUserAndRelatedCaches(request.username(), userData))
+                .onFailure().invoke(err ->
+                        log.errorf(err, "Error updating cache COA Disconnect for user: %s", request.username()))
+                .replaceWith(result);
+    }
+
+    private Uni<UpdateResult> updateCacheForNormalOperation(
+            UserSessionData userData,
+            AccountingRequestDto request,
+            Balance foundBalance,
+            UpdateResult result) {
+        return getUpdateResultUni(userData, request, foundBalance, result);
+    }
+
 
     /**
      * Find a balance by bucket ID from a list of balances
