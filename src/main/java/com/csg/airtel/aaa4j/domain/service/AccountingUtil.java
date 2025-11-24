@@ -110,6 +110,7 @@ public class AccountingUtil {
             Session sessionData,
             AccountingRequestDto request,String bucketId) {
 
+        //todo need to this method simplify and improve peromence
 
         long totalGigaWords =(long) request.outputGigaWords() + (long) request.inputGigaWords();
 
@@ -132,7 +133,7 @@ public class AccountingUtil {
                                     return Uni.createFrom().item(UpdateResult.failure("error"));
                                 }
                                 String previousUsageBucketId = getString(sessionData, foundBalance);
-
+                                 long newQuota = 0L;
                                 // If bucket has changed, update the previous bucket's quota with usage delta
                                 if (!previousUsageBucketId.equals(foundBalance.getBucketId())) {
                                     log.infof("Bucket changed from %s to %s for session: %s",
@@ -141,32 +142,34 @@ public class AccountingUtil {
                                     // Find and update the previous bucket
                                     Balance previousBalance = findBalanceByBucketId(combinedBalances, previousUsageBucketId);
                                     if (previousBalance != null) {
-                                        long previousNewQuota = getNewQuota(sessionData, previousBalance, totalUsage);
-                                        if (previousNewQuota < 0) {
-                                            previousNewQuota = 0;
+                                        newQuota = getNewQuota(sessionData, previousBalance, totalUsage);
+                                        if (newQuota < 0) {
+                                            newQuota = 0;
                                         }
-                                        previousBalance.setQuota(previousNewQuota);
+                                        previousBalance.setQuota(newQuota);
                                         replaceInCollection(userData.getBalance(), previousBalance);
                                         log.infof("Updated previous bucket %s quota to %d",
-                                                previousUsageBucketId, previousNewQuota);
+                                                previousUsageBucketId, newQuota);
                                     }
+                                }else {
+
+                                    newQuota = getNewQuota(sessionData, foundBalance, totalUsage);
+
+                                    if (newQuota <= 0) {
+                                        log.warnf("Quota depleted for session: %s", request.sessionId());
+                                        newQuota = 0;
+                                    }
+
+                                    foundBalance.setQuota(newQuota);
+                                    replaceInCollection(userData.getBalance(), foundBalance);
+                                    replaceInCollection(userData.getSessions(), sessionData);
                                 }
-
-                                long newQuota = getNewQuota(sessionData, foundBalance, totalUsage);
-
-                                if (newQuota <= 0) {
-                                    log.warnf("Quota depleted for session: %s", request.sessionId());
-                                    newQuota = 0;
-                                }
-
-                                foundBalance.setQuota(newQuota);
 
                                 sessionData.setPreviousTotalUsageQuotaValue(totalUsage);
                                 sessionData.setSessionTime(request.sessionTime());
                                 sessionData.setPreviousUsageBucketId(foundBalance.getBucketId());
 
-                                replaceInCollection(userData.getBalance(), foundBalance);
-                                replaceInCollection(userData.getSessions(), sessionData);
+
 
                                 UpdateResult success = UpdateResult.success(newQuota, foundBalance.getBucketId(),foundBalance,previousUsageBucketId);
                                 if (success.newQuota() <= 0 || !(foundBalance.getBucketId().equals(previousUsageBucketId))) {
