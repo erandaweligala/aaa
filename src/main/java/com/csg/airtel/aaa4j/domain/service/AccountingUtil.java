@@ -154,7 +154,14 @@ public class AccountingUtil {
         String previousUsageBucketId = getPreviousUsageBucketId(sessionData, foundBalance);
         boolean bucketChanged = !previousUsageBucketId.equals(foundBalance.getBucketId());
 
-        //todo implement if bucketChanged = true need to foundBalance = previousBalance
+        // If bucket changed, use the previous balance for subsequent operations
+        if (bucketChanged) {
+            Balance previousBalance = findBalanceByBucketId(combinedBalances, previousUsageBucketId);
+            if (previousBalance != null) {
+                foundBalance = previousBalance;
+                log.infof("Bucket changed - using previous balance %s instead of new balance", previousUsageBucketId);
+            }
+        }
 
         long newQuota = updateQuotaForBucketChange(
                 userData, sessionData, foundBalance, combinedBalances,
