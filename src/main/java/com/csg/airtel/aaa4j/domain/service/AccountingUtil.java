@@ -110,7 +110,7 @@ public class AccountingUtil {
             Session sessionData,
             AccountingRequestDto request,String bucketId) {
 
-        //todo need to this method simplify and improve peromence
+        //todo need to this method simplify and improve peformance
 
         long totalGigaWords =(long) request.outputGigaWords() + (long) request.inputGigaWords();
 
