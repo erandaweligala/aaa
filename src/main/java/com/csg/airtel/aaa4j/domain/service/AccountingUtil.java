@@ -266,6 +266,7 @@ public class AccountingUtil {
                             !session.getSessionId().equals(request.sessionId()));
                 })
                 .chain(() -> cacheClient.updateUserAndRelatedCaches(request.username(), userData))
+                // todo add update genarate db event update related bucket
                 .onFailure().invoke(err ->
                         log.errorf(err, "Error updating cache COA Disconnect for user: %s", request.username()))
                 .replaceWith(result);

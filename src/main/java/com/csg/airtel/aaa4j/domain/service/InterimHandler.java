@@ -135,10 +135,9 @@ public class InterimHandler {
                         if (!updateResult.success()) {
                             log.warnf("update failed for sessionId: %s", request.sessionId());
                         }
-                        if(updateResult.newQuota()<=0 || !updateResult.previousUsageBucketId().equals(updateResult.balance().getBucketId())) {
-                          return stopHandler.stopProcessing(request
-                                    ,updateResult.bucketId(),traceId);
-                        }
+//                        if(updateResult.newQuota()<=0 || !updateResult.previousUsageBucketId().equals(updateResult.balance().getBucketId())) {
+//
+//                        }
                         log.infof("Interim accounting processing time ms : %d",
                                 System.currentTimeMillis() - startTime);
                         generateAndSendCDR(request, finalSession);

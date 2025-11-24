@@ -28,7 +28,7 @@ public class AccountingHandlerFactory {
         return switch (request.actionType()) {
             case START -> startHandler.processAccountingStart(request,traceId);
             case INTERIM_UPDATE -> interimHandler.handleInterim(request,traceId);
-            case STOP -> stopHandler.stopProcessing(request, null,null,null,traceId);
+            case STOP -> stopHandler.stopProcessing(request, null,traceId);
         };
     }
 
