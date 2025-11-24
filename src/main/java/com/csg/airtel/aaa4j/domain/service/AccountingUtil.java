@@ -1,6 +1,8 @@
 package com.csg.airtel.aaa4j.domain.service;
 
 import com.csg.airtel.aaa4j.domain.model.AccountingRequestDto;
+import com.csg.airtel.aaa4j.domain.model.DBWriteRequest;
+import com.csg.airtel.aaa4j.domain.model.EventType;
 import com.csg.airtel.aaa4j.domain.model.UpdateResult;
 import com.csg.airtel.aaa4j.domain.model.session.Balance;
 import com.csg.airtel.aaa4j.domain.model.session.Session;
@@ -19,10 +21,7 @@ import java.time.LocalDateTime;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 
 
 @ApplicationScoped
@@ -165,6 +164,8 @@ public class AccountingUtil {
         UpdateResult result = UpdateResult.success(newQuota, foundBalance.getBucketId(), foundBalance, previousUsageBucketId);
 
         if (shouldDisconnectSession(result, foundBalance, previousUsageBucketId)) {
+
+            // todo implement to code clear all sessions and session related sen COA and update foundbalance.bucketId newquota
             return handleSessionDisconnect(userData, request, foundBalance, result);
         }
 
@@ -266,7 +267,6 @@ public class AccountingUtil {
                             !session.getSessionId().equals(request.sessionId()));
                 })
                 .chain(() -> cacheClient.updateUserAndRelatedCaches(request.username(), userData))
-                // todo add update genarate db event update related bucket
                 .onFailure().invoke(err ->
                         log.errorf(err, "Error updating cache COA Disconnect for user: %s", request.username()))
                 .replaceWith(result);
@@ -341,6 +341,7 @@ public class AccountingUtil {
                 .onItem().transformToUniAndConcatenate(  // Change this
                         session -> accountProducer.produceAccountingResponseEvent(
                                         MappingUtil.createResponse(session.getSessionId(), "Disconnect", session.getNasIp(), session.getFramedId(), username)
+
                                 )
                                 .onFailure().retry()
                                 .withBackOff(Duration.ofMillis(100), Duration.ofSeconds(2))
@@ -407,6 +408,75 @@ public class AccountingUtil {
             balanceListUni = Uni.createFrom().item(new ArrayList<>());
         }
     return balanceListUni;
+    }
+
+//    private void updateGroupBalance(String groupId, Balance balance,String sessionId) {
+//
+//        UserSessionData userSessionData = new UserSessionData();
+//        userSessionData.setGroupId(groupId);
+//        userSessionData.setBalance(List.of(balance));
+//        cacheClient.updateUserAndRelatedCaches(groupId,userSessionData)
+//                 .call(() -> {
+//
+//                     DBWriteRequest dbWriteRequest = buildDBWriteRequest(
+//                             sessionId,
+//                             columnValues,
+//                             whereConditions,
+//                             request.username()
+//                     );
+//
+//                     return accountProducer.produceDBWriteEvent(dbWriteRequest)
+//                             .onFailure().invoke(throwable ->
+//                                     log.errorf(throwable, "Failed to produce DB write event for session: %s",
+//                                             sessionId)
+//                             );
+//
+//                 })
+//                 .invoke(() -> userSessionData.getSessions().remove(session))
+//                 .call(() -> {
+//                     log.infof("[traceId: %s] Updating cache for user: %s", request.username());
+//                     // Update cache
+//                     return cacheClient.updateUserAndRelatedCaches(request.username(), userSessionData)
+//                             .onFailure().invoke(throwable ->
+//                                     log.errorf(throwable, "Failed to update cache for user: %s",
+//                                             request.username())
+//                             )
+//                             .onFailure().recoverWithNull(); // Cache failure can still be swallowed
+//                 })
+//
+//    }
+
+
+    // Separate methods for clarity and potential reuse
+    private void populateWhereConditions(Map<String, Object> whereConditions, Balance balance) {
+        whereConditions.put("SERVICE_ID", balance.getServiceId());
+        whereConditions.put("BUCKET_ID", balance.getBucketId());
+    }
+
+    private void populateColumnValues(Map<String, Object> columnValues, Balance balance) {
+        columnValues.put("CURRENT_BALANCE", balance.getQuota());
+        columnValues.put("USAGE", balance.getInitialBalance()- balance.getQuota());
+        columnValues.put("UPDATED_AT", LocalDateTime.now());
+    }
+
+    // Extract to builder method for clarity and reusability
+    private DBWriteRequest buildDBWriteRequest(
+            String sessionId,
+            Map<String, Object> columnValues,
+            Map<String, Object> whereConditions,
+            String userName) {
+
+        DBWriteRequest dbWriteRequest = new DBWriteRequest();
+        dbWriteRequest.setSessionId(sessionId);
+        dbWriteRequest.setUserName(userName);
+        dbWriteRequest.setEventType(EventType.UPDATE_EVENT);
+        dbWriteRequest.setWhereConditions(whereConditions);
+        dbWriteRequest.setColumnValues(columnValues);
+        dbWriteRequest.setTableName("CSGAAA.BUCKET_TABLE");
+        dbWriteRequest.setEventId(UUID.randomUUID().toString());
+        dbWriteRequest.setTimestamp(LocalDateTime.now());
+
+        return dbWriteRequest;
     }
 
 }
