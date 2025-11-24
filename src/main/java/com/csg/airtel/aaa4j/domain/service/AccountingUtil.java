@@ -132,7 +132,25 @@ public class AccountingUtil {
                                     return Uni.createFrom().item(UpdateResult.failure("error"));
                                 }
                                 String previousUsageBucketId = getString(sessionData, foundBalance);
-                                //todo previousUsageBucketId and foundBalance.getBucketId() not same  i need to newQuota update previousUsageBucketId
+
+                                // If bucket has changed, update the previous bucket's quota with usage delta
+                                if (!previousUsageBucketId.equals(foundBalance.getBucketId())) {
+                                    log.infof("Bucket changed from %s to %s for session: %s",
+                                            previousUsageBucketId, foundBalance.getBucketId(), request.sessionId());
+
+                                    // Find and update the previous bucket
+                                    Balance previousBalance = findBalanceByBucketId(combinedBalances, previousUsageBucketId);
+                                    if (previousBalance != null) {
+                                        long previousNewQuota = getNewQuota(sessionData, previousBalance, totalUsage);
+                                        if (previousNewQuota < 0) {
+                                            previousNewQuota = 0;
+                                        }
+                                        previousBalance.setQuota(previousNewQuota);
+                                        replaceInCollection(userData.getBalance(), previousBalance);
+                                        log.infof("Updated previous bucket %s quota to %d",
+                                                previousUsageBucketId, previousNewQuota);
+                                    }
+                                }
 
                                 long newQuota = getNewQuota(sessionData, foundBalance, totalUsage);
 
@@ -184,6 +202,22 @@ public class AccountingUtil {
             previousUsageBucketId = foundBalance.getBucketId();
         }
         return previousUsageBucketId;
+    }
+
+    /**
+     * Find a balance by bucket ID from a list of balances
+     * @param balances list of balances to search
+     * @param bucketId the bucket ID to find
+     * @return the balance with matching bucket ID, or null if not found
+     */
+    private Balance findBalanceByBucketId(List<Balance> balances, String bucketId) {
+        if (balances == null || bucketId == null) {
+            return null;
+        }
+        return balances.stream()
+                .filter(balance -> bucketId.equals(balance.getBucketId()))
+                .findFirst()
+                .orElse(null);
     }
 
     private Uni<UpdateResult> getUpdateResultUni(UserSessionData userData, AccountingRequestDto request, Balance foundBalance, UpdateResult success) {
