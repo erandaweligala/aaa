@@ -165,7 +165,7 @@ public class AccountingUtil {
 
         if (shouldDisconnectSession(result, foundBalance, previousUsageBucketId)) {
 
-            // todo implement to code clear all sessions and session related sen COA and update foundbalance.bucketId newquota
+            // todo implement to code clear all sessions and session related sen COA and update foundbalance.bucketId newquota trigger DB event update
             return handleSessionDisconnect(userData, request, foundBalance, result);
         }
 
