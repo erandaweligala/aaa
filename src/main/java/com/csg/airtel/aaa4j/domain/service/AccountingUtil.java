@@ -154,7 +154,17 @@ public class AccountingUtil {
         String previousUsageBucketId = getPreviousUsageBucketId(sessionData, foundBalance);
         boolean bucketChanged = !previousUsageBucketId.equals(foundBalance.getBucketId());
 
-        // todo implement if bucketChanged=true foundBalance == previousBalance
+        // Check if bucket changed but foundBalance is the same object as previousBalance
+        if (bucketChanged) {
+            Balance previousBalance = findBalanceByBucketId(combinedBalances, previousUsageBucketId);
+            if (previousBalance != null && foundBalance == previousBalance) {
+                log.warnf("Bucket ID changed from %s to %s but foundBalance is the same object. " +
+                        "This indicates a data inconsistency for session: %s",
+                        previousUsageBucketId, foundBalance.getBucketId(), sessionData.getSessionId());
+                // Treat as no bucket change since it's the same balance object
+                bucketChanged = false;
+            }
+        }
 
         long newQuota = updateQuotaForBucketChange(
                 userData, sessionData, foundBalance, combinedBalances,
