@@ -154,10 +154,13 @@ public class AccountingUtil {
         String previousUsageBucketId = getPreviousUsageBucketId(sessionData, foundBalance);
         boolean bucketChanged = !previousUsageBucketId.equals(foundBalance.getBucketId());
 
+        // todo implement if bucketChanged=true foundBalance == previousBalance
+
         long newQuota = updateQuotaForBucketChange(
                 userData, sessionData, foundBalance, combinedBalances,
                 previousUsageBucketId, bucketChanged, totalUsage
         );
+
 
         updateSessionData(sessionData, foundBalance, totalUsage, request.sessionTime());
 
@@ -260,7 +263,7 @@ public class AccountingUtil {
 
         // Clear all sessions and send COA disconnect for all sessions
         return clearAllSessionsAndSendCOA(userData, request.username())
-                .chain(() -> updateBalanceInDatabase(foundBalance, result.newQuota(), request.sessionId(), request.username()))
+                .chain(() -> updateBalanceInDatabase(foundBalance, result.newQuota(), request.sessionId(), foundBalance.getBucketUsername(),request.username()))
                 .invoke(() -> {
                     log.infof("Successfully cleared all sessions and updated balance for user: %s", request.username());
                     userData.getSessions().clear(); // Clear all sessions from userData
@@ -333,28 +336,6 @@ public class AccountingUtil {
         collection.add(element);
     }
 
-
-    private Uni<Void> updateCOASessionForDisconnect(UserSessionData userSessionData, String sessionId, String username) {
-        return Multi.createFrom().iterable(userSessionData.getSessions())
-                .filter(session -> !session.getSessionId().equals(sessionId))
-                .onItem().transformToUniAndConcatenate(  // Change this
-                        session -> accountProducer.produceAccountingResponseEvent(
-                                        MappingUtil.createResponse(session.getSessionId(), "Disconnect", session.getNasIp(), session.getFramedId(), username)
-
-                                )
-                                .onFailure().retry()
-                                .withBackOff(Duration.ofMillis(100), Duration.ofSeconds(2))
-                                .atMost(2)
-                                .onFailure().invoke(failure ->
-                                        log.errorf(failure, "Failed to produce disconnect event for session: %s", session.getSessionId())
-                                )
-                                .onFailure().recoverWithNull()
-                )
-                .collect().asList()
-                .ifNoItem().after(Duration.ofSeconds(45)).fail()
-                .replaceWithVoid();
-    }
-
     /**
      * Clear all sessions and send COA disconnect for all sessions (including current session)
      * @param userSessionData user session data containing all sessions
@@ -394,7 +375,7 @@ public class AccountingUtil {
      * @param userName username
      * @return Uni<Void>
      */
-    private Uni<Void> updateBalanceInDatabase(Balance balance, long newQuota, String sessionId, String userName) {
+    private Uni<Void> updateBalanceInDatabase(Balance balance, long newQuota, String sessionId, String bucketUser, String userName) {
         Map<String, Object> columnValues = new HashMap<>();
         Map<String, Object> whereConditions = new HashMap<>();
 
@@ -411,9 +392,11 @@ public class AccountingUtil {
                 userName
         );
 
-        return accountProducer.produceDBWriteEvent(dbWriteRequest)
-                .onFailure().invoke(throwable ->
-                        log.errorf(throwable, "Failed to produce DB write event for balance update, session: %s", sessionId)
+       return updateGroupBalanceBucket(balance,bucketUser,userName)
+                .chain(() -> accountProducer.produceDBWriteEvent(dbWriteRequest)
+                        .onFailure().invoke(throwable ->
+                                log.errorf(throwable, "Failed to produce DB write event for balance update, session: %s", sessionId)
+                        )
                 );
     }
 
@@ -421,6 +404,17 @@ public class AccountingUtil {
         return (gigawords * GIGAWORD_MULTIPLIER) + octets;
     }
 
+    private Uni<Void> updateGroupBalanceBucket(Balance balance, String bucketUsername,String username) {
+        if(!username.equals(bucketUsername)) {
+            UserSessionData userSessionData = new UserSessionData();
+            userSessionData.setBalance(List.of(balance));
+            return cacheClient.updateUserAndRelatedCaches(bucketUsername,userSessionData)
+                    .onFailure().invoke(throwable ->
+                    log.errorf(throwable, "Failed to Update Cache group for balance update, groupId: %s", bucketUsername)
+            );
+        }
+        return Uni.createFrom().voidItem();
+    }
 
     public static boolean isWithinTimeWindow(String timeWindow) {
         // Parse the time window string (e.g., "6PM-6AM" or "18:00-06:00")
@@ -470,42 +464,6 @@ public class AccountingUtil {
         }
     return balanceListUni;
     }
-
-//    private void updateGroupBalance(String groupId, Balance balance,String sessionId) {
-//
-//        UserSessionData userSessionData = new UserSessionData();
-//        userSessionData.setGroupId(groupId);
-//        userSessionData.setBalance(List.of(balance));
-//        cacheClient.updateUserAndRelatedCaches(groupId,userSessionData)
-//                 .call(() -> {
-//
-//                     DBWriteRequest dbWriteRequest = buildDBWriteRequest(
-//                             sessionId,
-//                             columnValues,
-//                             whereConditions,
-//                             request.username()
-//                     );
-//
-//                     return accountProducer.produceDBWriteEvent(dbWriteRequest)
-//                             .onFailure().invoke(throwable ->
-//                                     log.errorf(throwable, "Failed to produce DB write event for session: %s",
-//                                             sessionId)
-//                             );
-//
-//                 })
-//                 .invoke(() -> userSessionData.getSessions().remove(session))
-//                 .call(() -> {
-//                     log.infof("[traceId: %s] Updating cache for user: %s", request.username());
-//                     // Update cache
-//                     return cacheClient.updateUserAndRelatedCaches(request.username(), userSessionData)
-//                             .onFailure().invoke(throwable ->
-//                                     log.errorf(throwable, "Failed to update cache for user: %s",
-//                                             request.username())
-//                             )
-//                             .onFailure().recoverWithNull(); // Cache failure can still be swallowed
-//                 })
-//
-//    }
 
 
     // Separate methods for clarity and potential reuse

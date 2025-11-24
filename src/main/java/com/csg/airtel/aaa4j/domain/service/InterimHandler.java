@@ -29,14 +29,12 @@ public class InterimHandler {
 
     private final CacheClient cacheUtil;
     private final UserBucketRepository userRepository;
-    private final StopHandler stopHandler;
     private final AccountingUtil accountingUtil;
     private final AccountProducer accountProducer;
     @Inject
-    public InterimHandler(CacheClient cacheUtil, UserBucketRepository userRepository, StopHandler stopHandler, AccountingUtil accountingUtil, AccountProducer accountProducer) {
+    public InterimHandler(CacheClient cacheUtil, UserBucketRepository userRepository,AccountingUtil accountingUtil, AccountProducer accountProducer) {
         this.cacheUtil = cacheUtil;
         this.userRepository = userRepository;
-        this.stopHandler = stopHandler;
         this.accountingUtil = accountingUtil;
         this.accountProducer = accountProducer;
     }
@@ -135,9 +133,6 @@ public class InterimHandler {
                         if (!updateResult.success()) {
                             log.warnf("update failed for sessionId: %s", request.sessionId());
                         }
-//                        if(updateResult.newQuota()<=0 || !updateResult.previousUsageBucketId().equals(updateResult.balance().getBucketId())) {
-//
-//                        }
                         log.infof("Interim accounting processing time ms : %d",
                                 System.currentTimeMillis() - startTime);
                         generateAndSendCDR(request, finalSession);
