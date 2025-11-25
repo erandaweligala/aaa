@@ -116,6 +116,8 @@ public class AccountingUtil {
         // - Enforces byte limit (Balance.consumptionLimit) within that window
         // - Triggers CoA disconnect when limit is exceeded
 
+        //todo need to modify code after disconnect connot accept onther request  limit is exceed nort consume in bucket
+
         long totalUsage = calculateTotalUsage(request);
 
         return getCombinedBalances(userData.getGroupId(), userData.getBalance())
@@ -167,39 +169,6 @@ public class AccountingUtil {
                 .sum();
     }
 
-    /**
-     * Check if adding new consumption would exceed the consumption limit
-     * @param balance balance to check
-     * @param newConsumption new bytes to be consumed
-     * @return true if limit would be exceeded, false otherwise
-     */
-    private boolean wouldExceedConsumptionLimit(Balance balance, long newConsumption) {
-        // Check if consumption limit is configured
-        if (balance.getConsumptionLimit() == null || balance.getConsumptionLimit() <= 0 ||
-            balance.getConsumptionLimitWindow() == null || balance.getConsumptionLimitWindow() <= 0) {
-            return false; // No limit configured
-        }
-
-        long windowHours = balance.getConsumptionLimitWindow();
-
-        // Clean up old records outside the window
-        cleanupOldConsumptionRecords(balance, windowHours);
-
-        // Calculate current consumption in window
-        long currentConsumption = calculateConsumptionInWindow(balance, windowHours);
-
-        // Check if adding new consumption would exceed limit
-        long totalConsumption = currentConsumption + newConsumption;
-
-        if (totalConsumption > balance.getConsumptionLimit()) {
-            log.warnf("Consumption limit exceeded for bucket %s: current=%d, new=%d, total=%d, limit=%d",
-                    balance.getBucketId(), currentConsumption, newConsumption,
-                    totalConsumption, balance.getConsumptionLimit());
-            return true;
-        }
-
-        return false;
-    }
 
     /**
      * Check if the current consumption (already recorded) exceeds the consumption limit
