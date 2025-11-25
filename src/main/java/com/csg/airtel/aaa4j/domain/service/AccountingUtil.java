@@ -30,7 +30,7 @@ public class AccountingUtil {
 
     private static final Logger log = Logger.getLogger(AccountingUtil.class);
     private static final long GIGAWORD_MULTIPLIER = 4294967296L;
-   private final AccountProducer accountProducer;
+    private final AccountProducer accountProducer;
     private final CacheClient cacheClient;
 
 
@@ -114,8 +114,9 @@ public class AccountingUtil {
         // Data consumption limit implementation:
         // - Tracks consumption within a time window (Balance.consumptionLimitWindow in hours)
         // - Enforces byte limit (Balance.consumptionLimit) within that window
-        // - Checks limit BEFORE consuming from bucket to prevent over-consumption
-        // - Triggers CoA disconnect when limit is exceeded WITHOUT consuming from bucket
+        // - Triggers CoA disconnect when limit is exceeded
+        // - Updates consumptionHistory and quota before checking limit
+        // - Disconnects all sessions when limit is exceeded
 
         long totalUsage = calculateTotalUsage(request);
 
@@ -146,7 +147,7 @@ public class AccountingUtil {
 
         LocalDateTime cutoffTime = LocalDateTime.now().minusHours(windowHours);
         balance.getConsumptionHistory().removeIf(record ->
-            record.getTimestamp().isBefore(cutoffTime)
+                record.getTimestamp().isBefore(cutoffTime)
         );
     }
 
@@ -177,7 +178,7 @@ public class AccountingUtil {
     private boolean isConsumptionLimitExceeded(Balance balance) {
         // Check if consumption limit is configured
         if (balance.getConsumptionLimit() == null || balance.getConsumptionLimit() <= 0 ||
-            balance.getConsumptionLimitWindow() == null || balance.getConsumptionLimitWindow() <= 0) {
+                balance.getConsumptionLimitWindow() == null || balance.getConsumptionLimitWindow() <= 0) {
             return false; // No limit configured
         }
 
@@ -260,43 +261,33 @@ public class AccountingUtil {
             usageDelta = 0; // Clamp negative deltas to 0
         }
 
-        // Check consumption limit BEFORE updating quota (before consuming from bucket)
-        if (foundBalance.getConsumptionLimit() != null && foundBalance.getConsumptionLimit() > 0 &&
-            foundBalance.getConsumptionLimitWindow() != null && foundBalance.getConsumptionLimitWindow() > 0) {
-
-            // Calculate what consumption would be if we add this delta
-            long windowHours = foundBalance.getConsumptionLimitWindow();
-            cleanupOldConsumptionRecords(foundBalance, windowHours);
-            long currentConsumption = calculateConsumptionInWindow(foundBalance, windowHours);
-            long projectedConsumption = currentConsumption + usageDelta;
-
-            if (projectedConsumption > foundBalance.getConsumptionLimit()) {
-                log.warnf("Consumption limit would be exceeded for user: %s, bucket: %s. Current: %d, Delta: %d, Projected: %d, Limit: %d. Triggering disconnect WITHOUT consuming from bucket.",
-                        request.username(), foundBalance.getBucketId(), currentConsumption, usageDelta, projectedConsumption, foundBalance.getConsumptionLimit());
-
-                // Create result WITHOUT updating quota (don't consume from bucket when limit is exceeded)
-                UpdateResult result = UpdateResult.success(
-                        foundBalance.getQuota(), // Keep current quota unchanged
-                        foundBalance.getBucketId(),
-                        foundBalance,
-                        previousUsageBucketId
-                );
-
-                // Trigger CoA disconnect due to consumption limit exceeded WITHOUT consuming from bucket
-                return handleConsumptionLimitExceeded(userData, request, foundBalance, result);
-            }
-        }
-
-        // Now it's safe to update quota (consume from bucket) since limit check passed
+        // Update quota first
         long newQuota = updateQuotaForBucketChange(
                 userData, sessionData, foundBalance, combinedBalances,
                 previousUsageBucketId, bucketChanged, totalUsage
         );
 
-        // Record consumption in history AFTER we know limit won't be exceeded
+        // Record consumption in history BEFORE checking limit if limit is configured
         if (foundBalance.getConsumptionLimit() != null && foundBalance.getConsumptionLimit() > 0 &&
-            foundBalance.getConsumptionLimitWindow() != null && foundBalance.getConsumptionLimitWindow() > 0) {
+                foundBalance.getConsumptionLimitWindow() != null && foundBalance.getConsumptionLimitWindow() > 0) {
             recordConsumption(foundBalance, usageDelta);
+
+            // Check if consumption limit is now exceeded (after recording)
+            if (isConsumptionLimitExceeded(foundBalance)) {
+                log.warnf("Consumption limit exceeded for user: %s, bucket: %s. Triggering disconnect.",
+                        request.username(), foundBalance.getBucketId());
+
+                // Create result with updated quota
+                UpdateResult result = UpdateResult.success(
+                        newQuota,
+                        foundBalance.getBucketId(),
+                        foundBalance,
+                        previousUsageBucketId
+                );
+
+                // Trigger CoA disconnect due to consumption limit exceeded
+                return handleConsumptionLimitExceeded(userData, request, foundBalance, result);
+            }
         }
 
         updateSessionData(sessionData, foundBalance, totalUsage, request.sessionTime());
@@ -398,9 +389,6 @@ public class AccountingUtil {
             userData.getBalance().remove(foundBalance);
         }
 
-        // Set disconnected flag to prevent processing subsequent requests
-        userData.setDisconnected(true);
-
         // Clear all sessions and send COA disconnect for all sessions
         return clearAllSessionsAndSendCOA(userData, request.username())
                 .chain(() -> updateBalanceInDatabase(foundBalance, result.newQuota(), request.sessionId(), foundBalance.getBucketUsername(),request.username()))
@@ -434,9 +422,6 @@ public class AccountingUtil {
         if (!foundBalance.getBucketUsername().equals(request.username())) {
             userData.getBalance().remove(foundBalance);
         }
-
-        // Set disconnected flag to prevent processing subsequent requests
-        userData.setDisconnected(true);
 
         // Clear all sessions and send COA disconnect for all sessions due to consumption limit
         return clearAllSessionsAndSendCOA(userData, request.username())
@@ -569,7 +554,7 @@ public class AccountingUtil {
                 userName
         );
 
-       return updateGroupBalanceBucket(balance,bucketUser,userName)
+        return updateGroupBalanceBucket(balance,bucketUser,userName)
                 .chain(() -> accountProducer.produceDBWriteEvent(dbWriteRequest)
                         .onFailure().invoke(throwable ->
                                 log.errorf(throwable, "Failed to produce DB write event for balance update, session: %s", sessionId)
@@ -587,8 +572,8 @@ public class AccountingUtil {
             userSessionData.setBalance(List.of(balance));
             return cacheClient.updateUserAndRelatedCaches(bucketUsername,userSessionData)
                     .onFailure().invoke(throwable ->
-                    log.errorf(throwable, "Failed to Update Cache group for balance update, groupId: %s", bucketUsername)
-            );
+                            log.errorf(throwable, "Failed to Update Cache group for balance update, groupId: %s", bucketUsername)
+                    );
         }
         return Uni.createFrom().voidItem();
     }
@@ -639,7 +624,7 @@ public class AccountingUtil {
         } else {
             balanceListUni = Uni.createFrom().item(new ArrayList<>());
         }
-    return balanceListUni;
+        return balanceListUni;
     }
 
 
