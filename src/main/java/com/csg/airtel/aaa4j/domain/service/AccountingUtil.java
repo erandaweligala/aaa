@@ -130,6 +130,41 @@ public class AccountingUtil {
     }
 
     /**
+     * Calculate the cutoff time for the consumption window based on midnight.
+     * For 12-hour window:
+     *   - If current time is before noon (12:00), window is midnight to noon
+     *   - If current time is after noon, window is noon to midnight
+     * For 24-hour window: window is from midnight to midnight (current day)
+     * For other window sizes: falls back to simple sliding window
+     *
+     * @param windowHours number of hours for the consumption limit window (12 or 24)
+     * @return LocalDateTime representing the start of the consumption window
+     */
+    private LocalDateTime calculateWindowStartTime(long windowHours) {
+        LocalDateTime midnight = LocalDate.now().atTime(LocalTime.MIDNIGHT);
+
+        if (windowHours == 24) {
+            // 24-hour window: from midnight to midnight (current day)
+            return midnight;
+        } else if (windowHours == 12) {
+            // 12-hour window: either midnight-noon or noon-midnight
+            LocalTime noon = LocalTime.NOON;
+            LocalTime currentTime = LocalTime.now();
+
+            if (currentTime.isBefore(noon)) {
+                // Before noon: window is midnight to noon
+                return midnight;
+            } else {
+                // After noon: window is noon to midnight
+                return midnight.plusHours(12);
+            }
+        } else {
+            // For other window sizes, fall back to simple sliding window
+            return LocalDateTime.now().minusHours(windowHours);
+        }
+    }
+
+    /**
      * Clean up consumption records outside the time window
      * @param balance balance containing consumption history
      * @param windowHours number of hours for the consumption limit window
@@ -139,9 +174,9 @@ public class AccountingUtil {
             return;
         }
 
-        LocalDateTime cutoffTime = LocalDate.now().atTime(LocalTime.MIDNIGHT).minusHours(windowHours);
+        LocalDateTime windowStartTime = calculateWindowStartTime(windowHours);
         balance.getConsumptionHistory().removeIf(record ->
-                record.getTimestamp().isBefore(cutoffTime)
+                record.getTimestamp().isBefore(windowStartTime)
         );
     }
 
@@ -156,9 +191,9 @@ public class AccountingUtil {
             return 0L;
         }
 
-        LocalDateTime cutoffTime = LocalDateTime.now().minusHours(windowHours);
+        LocalDateTime windowStartTime = calculateWindowStartTime(windowHours);
         return balance.getConsumptionHistory().stream()
-                .filter(consumptionRecord -> consumptionRecord.getTimestamp().isAfter(cutoffTime))
+                .filter(consumptionRecord -> consumptionRecord.getTimestamp().isAfter(windowStartTime))
                 .mapToLong(ConsumptionRecord::getBytesConsumed)
                 .sum();
     }
@@ -182,7 +217,6 @@ public class AccountingUtil {
         cleanupOldConsumptionRecords(balance, windowHours);
 
         // Calculate current consumption in window (includes the just-recorded consumption)
-        //todo need to calculate time window  windowHours = 12hours or 24 hours , actual window in cal midnigt + 12 hours or midnigt + 24
         long currentConsumption = calculateConsumptionInWindow(balance, windowHours);
 
         // Check if current consumption exceeds limit
