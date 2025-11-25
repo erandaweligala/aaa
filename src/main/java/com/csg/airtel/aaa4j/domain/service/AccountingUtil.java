@@ -17,6 +17,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import org.jboss.logging.Logger;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 
@@ -111,13 +112,6 @@ public class AccountingUtil {
             AccountingRequestDto request,
             String bucketId) {
 
-        // Data consumption limit implementation:
-        // - Tracks consumption within a time window (Balance.consumptionLimitWindow in hours)
-        // - Enforces byte limit (Balance.consumptionLimit) within that window
-        // - Triggers CoA disconnect when limit is exceeded
-        // - Updates consumptionHistory and quota before checking limit
-        // - Disconnects all sessions when limit is exceeded
-
         long totalUsage = calculateTotalUsage(request);
 
         return getCombinedBalances(userData.getGroupId(), userData.getBalance())
@@ -145,7 +139,7 @@ public class AccountingUtil {
             return;
         }
 
-        LocalDateTime cutoffTime = LocalDateTime.now().minusHours(windowHours);
+        LocalDateTime cutoffTime = LocalDate.now().atTime(LocalTime.MIDNIGHT).minusHours(windowHours);
         balance.getConsumptionHistory().removeIf(record ->
                 record.getTimestamp().isBefore(cutoffTime)
         );
@@ -164,7 +158,7 @@ public class AccountingUtil {
 
         LocalDateTime cutoffTime = LocalDateTime.now().minusHours(windowHours);
         return balance.getConsumptionHistory().stream()
-                .filter(record -> record.getTimestamp().isAfter(cutoffTime))
+                .filter(consumptionRecord -> consumptionRecord.getTimestamp().isAfter(cutoffTime))
                 .mapToLong(ConsumptionRecord::getBytesConsumed)
                 .sum();
     }
@@ -188,6 +182,7 @@ public class AccountingUtil {
         cleanupOldConsumptionRecords(balance, windowHours);
 
         // Calculate current consumption in window (includes the just-recorded consumption)
+        //todo need to calculate time window  windowHours = 12hours or 24 hours , actual window in cal midnigt + 12 hours or midnigt + 24
         long currentConsumption = calculateConsumptionInWindow(balance, windowHours);
 
         // Check if current consumption exceeds limit
@@ -210,12 +205,13 @@ public class AccountingUtil {
             balance.setConsumptionHistory(new ArrayList<>());
         }
 
-        ConsumptionRecord record = new ConsumptionRecord(LocalDateTime.now(), bytesConsumed);
-        balance.getConsumptionHistory().add(record);
+        ConsumptionRecord consumptionRecord = new ConsumptionRecord(LocalDateTime.now(), bytesConsumed);
+        balance.getConsumptionHistory().add(consumptionRecord);
 
         log.debugf("Recorded consumption for bucket %s: %d bytes at %s",
-                balance.getBucketId(), bytesConsumed, record.getTimestamp());
+                balance.getBucketId(), bytesConsumed, consumptionRecord.getTimestamp());
     }
+
 
     private Uni<List<Balance>> getCombinedBalances(String groupId, List<Balance> userBalances) {
         return getGroupBucket(groupId)
