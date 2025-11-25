@@ -74,43 +74,16 @@ public class StartHandler {
     private Uni<Void> handleExistingUserSession(
             AccountingRequestDto request,
             UserSessionData userSessionData) {
-//
-//        double availableBalance = calculateAvailableBalance(userSessionData.getBalance());
-//        if (availableBalance <= 0) {
-//            log.warnf("[traceId: %s] User: %s has exhausted their data balance. Cannot start new session.",
-//                    request.username());
-//           return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "Data balance exhausted",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
-//
-//        }
-//        boolean sessionExists = userSessionData.getSessions()
-//                .stream()
-//                .anyMatch(session -> session.getSessionId().equals(request.sessionId()));
-//
-//        if (sessionExists) {
-//            log.infof("[traceId: %s] Session already exists for user: %s, sessionId: %s",
-//                    request.username(), request.sessionId());
-//            return Uni.createFrom().voidItem();
-//        }
-//
-//        // Add new session and update cache
-//        Session newSession = createSession(request);
-//        userSessionData.getSessions().add(newSession);
-//
-//        return utilCache.updateUserAndRelatedCaches(request.username(), userSessionData)
-//                .onItem().transformToUni(unused -> {
-//                    log.infof("[traceId: %s] New session added for user: %s, sessionId: %s",
-//                            request.username(), request.sessionId());
-//                    return Uni.createFrom().voidItem();
-//                })
-//                .invoke(() -> {
-//                    log.infof("cdr write event started for user: %s", request.username());
-//                    // Send CDR event asynchronously
-//                    generateAndSendCDR(request, newSession);
-//                })
-//                .onFailure().recoverWithUni(throwable -> {
-//                    log.errorf(throwable, "Failed to update cache for user: %s", request.username());
-//                    return Uni.createFrom().voidItem();
-//                });
+
+        // Check if user is marked as disconnected (after consumption limit exceeded or quota depleted)
+        if (userSessionData.getDisconnected() != null && userSessionData.getDisconnected()) {
+            log.warnf("User: %s is already disconnected. Rejecting new session start for sessionId: %s",
+                    request.username(), request.sessionId());
+            return accountProducer.produceAccountingResponseEvent(
+                    MappingUtil.createResponse(request, "User already disconnected - cannot start new session",
+                            AccountingResponseEvent.EventType.COA,
+                            AccountingResponseEvent.ResponseAction.DISCONNECT));
+        }
 
         // Declare balanceListUni outside the if block
         Uni<List<Balance>> balanceListUni;
