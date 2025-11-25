@@ -110,6 +110,9 @@ public class AccountingUtil {
             AccountingRequestDto request,
             String bucketId) {
 
+        //todo implement to Data consumpsion limit   alreday include in Balance.consumptionLimitWindow = 12h 24 hr and balance.consumptionLimit = ex bytes manage within current datetime in limit to given bytes limit exceed send to the CoA
+
+
         long totalUsage = calculateTotalUsage(request);
 
         return getCombinedBalances(userData.getGroupId(), userData.getBalance())
