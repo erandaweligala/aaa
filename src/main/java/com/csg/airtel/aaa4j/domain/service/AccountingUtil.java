@@ -115,8 +115,6 @@ public class AccountingUtil {
         // - Tracks consumption within a time window (Balance.consumptionLimitWindow in hours)
         // - Enforces byte limit (Balance.consumptionLimit) within that window
         // - Triggers CoA disconnect when limit is exceeded
-        // - Updates consumptionHistory and quota before checking limit
-        // - Disconnects all sessions when limit is exceeded
 
         long totalUsage = calculateTotalUsage(request);
 
