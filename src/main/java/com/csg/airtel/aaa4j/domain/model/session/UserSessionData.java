@@ -16,5 +16,6 @@ public class UserSessionData {
     private List<Balance> balance;
     private List<Session> sessions;
     private QosParam qosParam;
+    private Boolean disconnected; // Flag to prevent processing requests after disconnect
 
 }

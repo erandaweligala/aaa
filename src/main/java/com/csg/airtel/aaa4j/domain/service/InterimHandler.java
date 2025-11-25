@@ -115,6 +115,15 @@ public class InterimHandler {
         log.infof("Processing interim accounting request for user: %s, sessionId: %s",
                 request.username(), request.sessionId());
 
+        // Check if user is marked as disconnected (after consumption limit exceeded or quota depleted)
+        if (userData.getDisconnected() != null && userData.getDisconnected()) {
+            log.warnf("User: %s is already disconnected. Rejecting request for sessionId: %s",
+                    request.username(), request.sessionId());
+            return accountProducer.produceAccountingResponseEvent(
+                    MappingUtil.createResponse(request, "User already disconnected",
+                            AccountingResponseEvent.EventType.COA,
+                            AccountingResponseEvent.ResponseAction.DISCONNECT));
+        }
 
         Session session = findSession(userData, request.sessionId());
         if (session == null) {
