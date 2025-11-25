@@ -5,6 +5,7 @@ import com.csg.airtel.aaa4j.domain.model.DBWriteRequest;
 import com.csg.airtel.aaa4j.domain.model.EventType;
 import com.csg.airtel.aaa4j.domain.model.UpdateResult;
 import com.csg.airtel.aaa4j.domain.model.session.Balance;
+import com.csg.airtel.aaa4j.domain.model.session.ConsumptionRecord;
 import com.csg.airtel.aaa4j.domain.model.session.Session;
 import com.csg.airtel.aaa4j.domain.model.session.UserSessionData;
 import com.csg.airtel.aaa4j.domain.produce.AccountProducer;
@@ -110,8 +111,10 @@ public class AccountingUtil {
             AccountingRequestDto request,
             String bucketId) {
 
-        //todo implement to Data consumpsion limit   alreday include in Balance.consumptionLimitWindow = 12h 24 hr and balance.consumptionLimit = ex bytes manage within current datetime in limit to given bytes limit exceed send to the CoA
-
+        // Data consumption limit implementation:
+        // - Tracks consumption within a time window (Balance.consumptionLimitWindow in hours)
+        // - Enforces byte limit (Balance.consumptionLimit) within that window
+        // - Triggers CoA disconnect when limit is exceeded
 
         long totalUsage = calculateTotalUsage(request);
 
@@ -128,6 +131,91 @@ public class AccountingUtil {
         long totalGigaWords = (long) request.outputGigaWords() + (long) request.inputGigaWords();
         long totalOctets = (long) request.inputOctets() + (long) request.outputOctets();
         return calculateTotalOctets(totalOctets, totalGigaWords);
+    }
+
+    /**
+     * Clean up consumption records outside the time window
+     * @param balance balance containing consumption history
+     * @param windowHours number of hours for the consumption limit window
+     */
+    private void cleanupOldConsumptionRecords(Balance balance, long windowHours) {
+        if (balance.getConsumptionHistory() == null || balance.getConsumptionHistory().isEmpty()) {
+            return;
+        }
+
+        LocalDateTime cutoffTime = LocalDateTime.now().minusHours(windowHours);
+        balance.getConsumptionHistory().removeIf(record ->
+            record.getTimestamp().isBefore(cutoffTime)
+        );
+    }
+
+    /**
+     * Calculate total consumption within the time window
+     * @param balance balance containing consumption history
+     * @param windowHours number of hours for the consumption limit window
+     * @return total bytes consumed within the window
+     */
+    private long calculateConsumptionInWindow(Balance balance, long windowHours) {
+        if (balance.getConsumptionHistory() == null || balance.getConsumptionHistory().isEmpty()) {
+            return 0L;
+        }
+
+        LocalDateTime cutoffTime = LocalDateTime.now().minusHours(windowHours);
+        return balance.getConsumptionHistory().stream()
+                .filter(record -> record.getTimestamp().isAfter(cutoffTime))
+                .mapToLong(ConsumptionRecord::getBytesConsumed)
+                .sum();
+    }
+
+    /**
+     * Check if adding new consumption would exceed the consumption limit
+     * @param balance balance to check
+     * @param newConsumption new bytes to be consumed
+     * @return true if limit would be exceeded, false otherwise
+     */
+    private boolean wouldExceedConsumptionLimit(Balance balance, long newConsumption) {
+        // Check if consumption limit is configured
+        if (balance.getConsumptionLimit() == null || balance.getConsumptionLimit() <= 0 ||
+            balance.getConsumptionLimitWindow() == null || balance.getConsumptionLimitWindow() <= 0) {
+            return false; // No limit configured
+        }
+
+        long windowHours = balance.getConsumptionLimitWindow();
+
+        // Clean up old records outside the window
+        cleanupOldConsumptionRecords(balance, windowHours);
+
+        // Calculate current consumption in window
+        long currentConsumption = calculateConsumptionInWindow(balance, windowHours);
+
+        // Check if adding new consumption would exceed limit
+        long totalConsumption = currentConsumption + newConsumption;
+
+        if (totalConsumption > balance.getConsumptionLimit()) {
+            log.warnf("Consumption limit exceeded for bucket %s: current=%d, new=%d, total=%d, limit=%d",
+                    balance.getBucketId(), currentConsumption, newConsumption,
+                    totalConsumption, balance.getConsumptionLimit());
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Record new consumption in the balance's consumption history
+     * @param balance balance to update
+     * @param bytesConsumed bytes consumed in this update
+     */
+    private void recordConsumption(Balance balance, long bytesConsumed) {
+        if (balance.getConsumptionHistory() == null) {
+            balance.setConsumptionHistory(new ArrayList<>());
+        }
+
+        ConsumptionRecord record = new ConsumptionRecord(LocalDateTime.now(), bytesConsumed);
+        balance.getConsumptionHistory().add(record);
+
+        log.debugf("Recorded consumption for bucket %s: %d bytes at %s",
+                balance.getBucketId(), bytesConsumed, record.getTimestamp());
     }
 
     private Uni<List<Balance>> getCombinedBalances(String groupId, List<Balance> userBalances) {
@@ -166,11 +254,41 @@ public class AccountingUtil {
             }
         }
 
+        // Calculate usage delta for consumption limit checking
+        Long previousUsageObj = sessionData.getPreviousTotalUsageQuotaValue();
+        long previousUsage = previousUsageObj == null ? 0L : previousUsageObj;
+        long usageDelta = totalUsage - previousUsage;
+        if (usageDelta < 0) {
+            usageDelta = 0; // Clamp negative deltas to 0
+        }
+
+        // Check consumption limit before processing
+        if (wouldExceedConsumptionLimit(foundBalance, usageDelta)) {
+            log.warnf("Consumption limit exceeded for user: %s, bucket: %s. Triggering disconnect.",
+                    request.username(), foundBalance.getBucketId());
+
+            // Create result indicating limit exceeded
+            UpdateResult result = UpdateResult.success(
+                    foundBalance.getQuota(), // Keep current quota
+                    foundBalance.getBucketId(),
+                    foundBalance,
+                    previousUsageBucketId
+            );
+
+            // Trigger CoA disconnect due to consumption limit exceeded
+            return handleConsumptionLimitExceeded(userData, request, foundBalance, result);
+        }
+
         long newQuota = updateQuotaForBucketChange(
                 userData, sessionData, foundBalance, combinedBalances,
                 previousUsageBucketId, bucketChanged, totalUsage
         );
 
+        // Record consumption in history if limit is configured
+        if (foundBalance.getConsumptionLimit() != null && foundBalance.getConsumptionLimit() > 0 &&
+            foundBalance.getConsumptionLimitWindow() != null && foundBalance.getConsumptionLimitWindow() > 0) {
+            recordConsumption(foundBalance, usageDelta);
+        }
 
         updateSessionData(sessionData, foundBalance, totalUsage, request.sessionTime());
 
@@ -281,6 +399,40 @@ public class AccountingUtil {
                 .chain(() -> cacheClient.updateUserAndRelatedCaches(request.username(), userData))
                 .onFailure().invoke(err ->
                         log.errorf(err, "Error clearing sessions and updating balance for user: %s", request.username()))
+                .replaceWith(result);
+    }
+
+    /**
+     * Handle consumption limit exceeded scenario by triggering CoA disconnect
+     * @param userData user session data
+     * @param request accounting request
+     * @param foundBalance balance that exceeded the limit
+     * @param result update result
+     * @return Uni<UpdateResult>
+     */
+    private Uni<UpdateResult> handleConsumptionLimitExceeded(
+            UserSessionData userData,
+            AccountingRequestDto request,
+            Balance foundBalance,
+            UpdateResult result) {
+
+        log.warnf("Consumption limit exceeded for user: %s, bucket: %s. Disconnecting all sessions.",
+                request.username(), foundBalance.getBucketId());
+
+        if (!foundBalance.getBucketUsername().equals(request.username())) {
+            userData.getBalance().remove(foundBalance);
+        }
+
+        // Clear all sessions and send COA disconnect for all sessions due to consumption limit
+        return clearAllSessionsAndSendCOA(userData, request.username())
+                .chain(() -> updateBalanceInDatabase(foundBalance, foundBalance.getQuota(), request.sessionId(), foundBalance.getBucketUsername(), request.username()))
+                .invoke(() -> {
+                    log.infof("Successfully disconnected all sessions for user: %s due to consumption limit exceeded", request.username());
+                    userData.getSessions().clear(); // Clear all sessions from userData
+                })
+                .chain(() -> cacheClient.updateUserAndRelatedCaches(request.username(), userData))
+                .onFailure().invoke(err ->
+                        log.errorf(err, "Error disconnecting sessions for consumption limit exceeded, user: %s", request.username()))
                 .replaceWith(result);
     }
 
