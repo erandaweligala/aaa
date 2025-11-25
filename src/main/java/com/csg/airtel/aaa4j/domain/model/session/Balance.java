@@ -14,7 +14,7 @@ public class Balance {
     private Long quota;
     private LocalDateTime serviceExpiry;
     private String bucketId;
-    private String serviceId;
+    private long serviceId;
     private Long priority;
     private LocalDateTime serviceStartDate;
     private String serviceStatus;

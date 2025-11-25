@@ -53,7 +53,7 @@ public class UserBucketRepository {
             ServiceBucketInfo info = new ServiceBucketInfo();
             info.setBucketId(row.getString("BUCKET_ID"));
             info.setCurrentBalance(row.getLong("CURRENT_BALANCE"));
-            info.setServiceId(row.getString("SERVICE_ID"));
+            info.setServiceId(row.getLong("ID"));
             info.setRule(row.getString("RULE"));
             info.setPriority(row.getLong("PRIORITY"));
             info.setInitialBalance(row.getLong("INITIAL_BALANCE"));

@@ -116,6 +116,8 @@ public class AccountingUtil {
         // - Enforces byte limit (Balance.consumptionLimit) within that window
         // - Triggers CoA disconnect when limit is exceeded
 
+        //todo need update consumptionHistory and quota limit exceed request after then disconnect all sessions
+
         long totalUsage = calculateTotalUsage(request);
 
         return getCombinedBalances(userData.getGroupId(), userData.getBalance())

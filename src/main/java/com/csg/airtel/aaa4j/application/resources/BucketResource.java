@@ -38,7 +38,7 @@ public class BucketResource {
     @Timed(name = "process_time", description = "Time to process request")
     @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
-    public Uni<ApiResponse<Balance>> updateBucket(@PathParam("userName") String userName, Balance balance,@PathParam("serviceId") String serviceId) {
+    public Uni<ApiResponse<Balance>> updateBucket(@PathParam("userName") String userName, Balance balance,@PathParam("serviceId") long serviceId) {
         log.infof("update bucket  Start %s", userName);
         Uni<ApiResponse<Balance>> apiResponseUni = bucketService.updateBucketBalance(userName, balance,serviceId);
         log.infof("update bucket  Completed %s", userName);
