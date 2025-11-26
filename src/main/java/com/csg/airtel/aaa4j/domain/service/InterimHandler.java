@@ -32,7 +32,7 @@ public class InterimHandler {
     private final AccountingUtil accountingUtil;
     private final AccountProducer accountProducer;
     @Inject
-    public InterimHandler(CacheClient cacheUtil, UserBucketRepository userRepository,AccountingUtil accountingUtil, AccountProducer accountProducer) {
+    public InterimHandler(CacheClient cacheUtil, UserBucketRepository userRepository, AccountingUtil accountingUtil, AccountProducer accountProducer) {
         this.cacheUtil = cacheUtil;
         this.userRepository = userRepository;
         this.accountingUtil = accountingUtil;
@@ -75,19 +75,12 @@ public class InterimHandler {
                     }
                     int bucketCount = serviceBuckets.size();
                     List<Balance> balanceList = new ArrayList<>(bucketCount);
-                    List<Balance> balanceGroupList = new ArrayList<>();
-                    String groupId = null;
                     double totalQuota = 0.0;
 
                     for (ServiceBucketInfo bucket : serviceBuckets) {
                         double currentBalance = bucket.getCurrentBalance();
                         totalQuota += currentBalance;
-                        if (!Objects.equals(request.username(), bucket.getBucketUser())) {
-                            balanceGroupList.add(MappingUtil.createBalance(bucket));
-                            groupId = bucket.getBucketUser();
-                        }else {
-                            balanceList.add(MappingUtil.createBalance(bucket));
-                        }
+                        balanceList.add(createBalance(bucket));
                     }
 
                     if (totalQuota <= 0) {
@@ -96,13 +89,8 @@ public class InterimHandler {
                                 AccountingResponseEvent.ResponseAction.DISCONNECT));
                     }
 
-
                      UserSessionData newUserSessionData =  UserSessionData.builder()
-                    .balance(balanceList)
-                             .sessions(new ArrayList<>(List.of(createSession(request))))
-                             .userName(request.username())
-                             .groupId(groupId)
-                             .build();
+                    .balance(balanceList).sessions(new ArrayList<>(List.of(createSession(request)))).build();
 
                      return processAccountingRequest(newUserSessionData, request,traceId);
 
@@ -112,19 +100,8 @@ public class InterimHandler {
     private Uni<Void> processAccountingRequest(
             UserSessionData userData, AccountingRequestDto request,String traceId) {
         long startTime = System.currentTimeMillis();
-        log.infof("Processing interim accounting request for user: %s, sessionId: %s",
-                request.username(), request.sessionId());
-
-        // Check if user is marked as disconnected (after consumption limit exceeded or quota depleted)
-        if (userData.getDisconnected() != null && userData.getDisconnected()) {
-            log.warnf("User: %s is already disconnected. Rejecting request for sessionId: %s",
-                    request.username(), request.sessionId());
-            return accountProducer.produceAccountingResponseEvent(
-                    MappingUtil.createResponse(request, "User already disconnected",
-                            AccountingResponseEvent.EventType.COA,
-                            AccountingResponseEvent.ResponseAction.DISCONNECT));
-        }
-
+        log.infof("TraceId: %s Processing interim accounting request for user: %s, sessionId: %s",
+                traceId,request.username(), request.sessionId());
         Session session = findSession(userData, request.sessionId());
         if (session == null) {
             session = createSession(request);
@@ -132,11 +109,11 @@ public class InterimHandler {
 
         // Early return if session time hasn't increased
         if (request.sessionTime() <= session.getSessionTime()) {
-            log.debugf("Duplicate Session time unchanged for sessionId: %s", request.sessionId());
+            log.warnf("TraceId: %s Duplicate Session time unchanged for sessionId: %s", traceId,request.sessionId());
             return Uni.createFrom().voidItem();
 
         }else {
-           final Session finalSession = session;
+            Session finalSession = session;
             return accountingUtil.updateSessionAndBalance(userData, session, request,null)
                     .onItem().transformToUni(updateResult -> {  // Changed from transform to transformToUni
                         if (!updateResult.success()) {
@@ -162,6 +139,7 @@ public class InterimHandler {
     }
 
 
+
     private Session createSession(AccountingRequestDto request) {
         return new Session(
                 request.sessionId(),
@@ -175,6 +153,18 @@ public class InterimHandler {
         );
     }
 
+    private Balance createBalance(ServiceBucketInfo bucket) {
+        Balance balance = new Balance();
+        balance.setBucketId(bucket.getBucketId());
+        balance.setServiceId(bucket.getServiceId());
+        balance.setServiceExpiry(bucket.getExpiryDate());
+        balance.setPriority(bucket.getPriority());
+        balance.setQuota(bucket.getCurrentBalance());
+        balance.setInitialBalance(bucket.getInitialBalance());
+        balance.setServiceStartDate(bucket.getServiceStartDate());
+        balance.setServiceStatus(bucket.getStatus());
+        return balance;
+    }
 
     private void generateAndSendCDR(AccountingRequestDto request, Session session) {
         try {

@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 @ToString
 public class ServiceBucketInfo {
     private String bucketUser;
-    private long serviceId;
+    private String serviceId;
     private String rule;
     private long priority;
     private long initialBalance;
@@ -26,5 +26,6 @@ public class ServiceBucketInfo {
     private long consumptionTimeWindow;
     private String timeWindow;
     private String sessionTimeout;
+    private LocalDateTime bucketExpiryDate;
 
 }

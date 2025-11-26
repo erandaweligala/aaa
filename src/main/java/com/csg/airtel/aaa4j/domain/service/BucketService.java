@@ -58,7 +58,7 @@ public class BucketService {
     }
 
 
-    public Uni<ApiResponse<Balance>> updateBucketBalance(String userName, Balance balance, long serviceId) {
+    public Uni<ApiResponse<Balance>> updateBucketBalance(String userName, Balance balance, String serviceId) {
         log.infof("Updating bucket Balance for user %s", userName);
         // Input validation
         if (userName == null || userName.isBlank()) {
@@ -67,7 +67,13 @@ public class BucketService {
         if (balance == null) {
             return Uni.createFrom().item(createErrorResponse("Balance is required"));
         }
+        if (serviceId == null || serviceId.isBlank()) {
+            return Uni.createFrom().item(createErrorResponse("Service Id is required"));
+        }
 
+        if (balance.getServiceId() == null || !balance.getServiceId().equals(serviceId)) {
+            return Uni.createFrom().item(createErrorResponse("Balance serviceId must match the provided serviceId"));
+        }
 
         return cacheClient.getUserData(userName)
                 .onItem().transformToUni(userData -> {
@@ -79,7 +85,7 @@ public class BucketService {
                             ? new ArrayList<>(userData.getBalance())
                             : new ArrayList<>();
 
-                    balanceList.removeIf(b -> b.getServiceId() == serviceId);
+                    balanceList.removeIf(b -> b.getServiceId().equals(serviceId));
 
                     balanceList.add(balance);
 

@@ -13,8 +13,9 @@ public class Balance {
     private Long initialBalance;
     private Long quota;
     private LocalDateTime serviceExpiry;
+    private LocalDateTime bucketExpiryDate;
     private String bucketId;
-    private long serviceId;
+    private String serviceId;
     private Long priority;
     private LocalDateTime serviceStartDate;
     private String serviceStatus;
@@ -22,7 +23,7 @@ public class Balance {
     private Long consumptionLimit;
     private Long consumptionLimitWindow;
     private String bucketUsername;
-    private boolean isGroup;
     private List<ConsumptionRecord> consumptionHistory = new ArrayList<>();
+    private boolean isGroup;
 
 }

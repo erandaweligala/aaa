@@ -75,16 +75,6 @@ public class StartHandler {
             AccountingRequestDto request,
             UserSessionData userSessionData) {
 
-        // Check if user is marked as disconnected (after consumption limit exceeded or quota depleted)
-        if (userSessionData.getDisconnected() != null && userSessionData.getDisconnected()) {
-            log.warnf("User: %s is already disconnected. Rejecting new session start for sessionId: %s",
-                    request.username(), request.sessionId());
-            return accountProducer.produceAccountingResponseEvent(
-                    MappingUtil.createResponse(request, "User already disconnected - cannot start new session",
-                            AccountingResponseEvent.EventType.COA,
-                            AccountingResponseEvent.ResponseAction.DISCONNECT));
-        }
-
         // Declare balanceListUni outside the if block
         Uni<List<Balance>> balanceListUni;
 
@@ -149,74 +139,6 @@ public class StartHandler {
 
     }
 
-//    private Uni<Void> handleNewUserSession(AccountingRequestDto request) {
-//        log.infof("No existing session data found for user: %s. Creating new session data.",
-//                request.username());
-//
-//        return userRepository.getServiceBucketsByUserName(request.username())
-//                .onItem().transformToUni(serviceBuckets -> {
-//                    if (serviceBuckets == null || serviceBuckets.isEmpty()) {
-//                        log.warnf("traceId: %s No service buckets found for user: %s. Cannot create session data.",
-//                                request.username());
-//                      return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "No service buckets found",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
-//
-//                    }
-//                    double totalQuota = 0.0;
-//                    List<Balance> balanceList = new ArrayList<>(serviceBuckets.size());
-//                    List<Balance> balanceGroupList = new ArrayList<>(serviceBuckets.size());
-//                    UserSessionData newUserGroupSessionData = new UserSessionData();
-//                    for (ServiceBucketInfo bucket : serviceBuckets) {
-//                        if(!Objects.equals(request.username(), bucket.getBucketUser())){
-//
-//                            Balance balance = MappingUtil.createBalance(bucket);
-//                            balanceGroupList.add(balance);
-//                            totalQuota += bucket.getCurrentBalance();
-//
-//                        }else {
-//                            Balance balance = MappingUtil.createBalance(bucket);
-//                            balanceList.add(balance);
-//                            totalQuota += bucket.getCurrentBalance();
-//                        }
-//                    }
-//
-//                    if(!balanceGroupList.isEmpty()){
-//                        return utilCache.storeUserData(request.username(), newUserGroupSessionData)
-//                                .onItem().transformToUni(unused -> {
-//                                    log.infof("New user session data created and stored for user: %s",
-//                                            request.username());
-//                                    //only if condiction execute no returns
-//                                });
-//                    }
-//
-//                    if (totalQuota <= 0) {
-//                        log.warnf("[traceId: %s] User: %s has zero total data quota. Cannot create session data.",
-//                                request.username());
-//                        return accountProducer.produceAccountingResponseEvent(MappingUtil.createResponse(request, "Data quota is zero",AccountingResponseEvent.EventType.COA,AccountingResponseEvent.ResponseAction.DISCONNECT));
-//                    }
-//
-//                    UserSessionData newUserSessionData = new UserSessionData();
-//                    Session session = createSession(request);
-//                    newUserSessionData.setSessions(new ArrayList<>(List.of(session)));
-//                    newUserSessionData.setBalance(balanceList);
-//
-//                    return utilCache.storeUserData(request.username(), newUserSessionData)
-//                            .onItem().transformToUni(unused -> {
-//                                log.infof("New user session data created and stored for user: %s",
-//                                        request.username());
-//                                return Uni.createFrom().voidItem();
-//                            })
-//                            .invoke(() -> {
-//                                // send CDR event asynchronously
-//                                log.infof("cdr write event started for user: %s", request.username());
-//                                generateAndSendCDR(request, session);
-//                            });
-//                })
-//                .onFailure().recoverWithUni(throwable -> {
-//                    log.errorf(throwable, "[traceId: %s] Error creating new user session for user: %s",
-//                            request.username());
-//                    return Uni.createFrom().voidItem();
-//                });
-//    }
 
     private Uni<Void> handleNewUserSession(AccountingRequestDto request) {
         log.infof("No existing session data found for user: %s. Creating new session data.",
@@ -282,12 +204,7 @@ public class StartHandler {
                         UserSessionData groupSessionData = new UserSessionData();
                         groupSessionData.setBalance(balanceGroupList);
                        final String finalGroupId = groupId;
-//                        Uni<Void> groupStorageUni = utilCache.storeUserData(finalGroupId, groupSessionData)
-//                                .onItem().invoke(unused ->
-//                                        log.infof("Group session data stored for groupId: %s", finalGroupId))
-//                                .onFailure().invoke(failure ->
-//                                        log.errorf(failure, "Failed to store group data for groupId: %s", finalGroupId))
-//                                .replaceWithVoid();
+
 
                         Uni<Void> groupStorageUni = utilCache.getUserData(groupId)
                                 .chain(existingData -> {

@@ -53,7 +53,7 @@ public class UserBucketRepository {
             ServiceBucketInfo info = new ServiceBucketInfo();
             info.setBucketId(row.getString("BUCKET_ID"));
             info.setCurrentBalance(row.getLong("CURRENT_BALANCE"));
-            info.setServiceId(row.getLong("ID"));
+            info.setServiceId(row.getString("SERVICE_ID"));
             info.setRule(row.getString("RULE"));
             info.setPriority(row.getLong("PRIORITY"));
             info.setInitialBalance(row.getLong("INITIAL_BALANCE"));
@@ -67,6 +67,8 @@ public class UserBucketRepository {
             info.setConsumptionTimeWindow(row.getLong("CONSUMPTION_LIMIT_WINDOW"));
             info.setSessionTimeout(row.getString("SESSION_TIMEOUT"));
             info.setTimeWindow(row.getString("TIME_WINDOW"));
+            info.setBucketExpiryDate(row.getLocalDateTime("CYCLE_END_DATE"));
+
             results.add(info);
         }
         return results;

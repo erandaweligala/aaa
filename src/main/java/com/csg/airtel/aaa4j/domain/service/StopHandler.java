@@ -142,10 +142,12 @@ public class StopHandler {
                 });
     }
 
+
+
     // Separate methods for clarity and potential reuse
     private void populateWhereConditions(Map<String, Object> whereConditions, Balance balance) {
         whereConditions.put("SERVICE_ID", balance.getServiceId());
-        whereConditions.put("BUCKET_ID", balance.getBucketId());
+        whereConditions.put("ID", balance.getBucketId());
     }
 
     private void populateColumnValues(Map<String, Object> columnValues, Balance balance) {
@@ -167,7 +169,7 @@ public class StopHandler {
         dbWriteRequest.setEventType(EventType.UPDATE_EVENT);
         dbWriteRequest.setWhereConditions(whereConditions);
         dbWriteRequest.setColumnValues(columnValues);
-        dbWriteRequest.setTableName("CSGAAA.BUCKET_TABLE");
+        dbWriteRequest.setTableName("BUCKET_INSTANCE");
         dbWriteRequest.setEventId(UUID.randomUUID().toString());
         dbWriteRequest.setTimestamp(LocalDateTime.now());
 

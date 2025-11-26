@@ -20,7 +20,8 @@ public class SQLConstant {
                            b.CONSUMPTION_LIMIT,
                            u.SESSION_TIMEOUT,
                            b.TIME_WINDOW,
-                           b.CONSUMPTION_LIMIT_WINDOW
+                           b.CONSUMPTION_LIMIT_WINDOW,
+                           s.CYCLE_END_DATE
                         FROM SERVICE_INSTANCE s
                         JOIN AAA_USER  u
                           ON s.USERNAME  = u.USER_NAME

@@ -3,7 +3,6 @@ package com.csg.airtel.aaa4j.domain.service;
 import com.csg.airtel.aaa4j.domain.model.AccountingRequestDto;
 import com.csg.airtel.aaa4j.domain.model.AccountingResponseEvent;
 import com.csg.airtel.aaa4j.domain.model.ServiceBucketInfo;
-import com.csg.airtel.aaa4j.domain.model.cdr.*;
 import com.csg.airtel.aaa4j.domain.model.session.Balance;
 
 import java.time.LocalDateTime;
@@ -79,6 +78,7 @@ public class MappingUtil {
         balance.setTimeWindow(bucket.getTimeWindow());
         balance.setConsumptionLimitWindow(bucket.getConsumptionTimeWindow());
         balance.setBucketUsername(bucket.getBucketUser());
+        balance.setBucketExpiryDate(bucket.getBucketExpiryDate());
         return balance;
     }
 
