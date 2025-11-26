@@ -27,6 +27,7 @@ public class TimeWindow {
      * @throws IllegalArgumentException if the format is invalid
      */
     public static TimeWindow parse(String timeWindowString) {
+        //todo only check this format only ex :- 00-24 24hours
         if (timeWindowString == null || timeWindowString.trim().isEmpty()) {
             throw new IllegalArgumentException("Time window string cannot be null or empty");
         }
