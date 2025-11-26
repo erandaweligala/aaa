@@ -164,6 +164,7 @@ class AccountProducerTest {
         // Given
         DBWriteRequest request = createDBWriteRequest();
 
+        @SuppressWarnings("unchecked")
         ArgumentCaptor<Message<DBWriteRequest>> messageCaptor = ArgumentCaptor.forClass(Message.class);
 
         doAnswer(invocation -> {
@@ -232,6 +233,7 @@ class AccountProducerTest {
         // Given
         AccountingResponseEvent event = createAccountingResponseEvent();
 
+        @SuppressWarnings("unchecked")
         ArgumentCaptor<Message<AccountingResponseEvent>> messageCaptor = ArgumentCaptor.forClass(Message.class);
 
         doAnswer(invocation -> {
@@ -300,6 +302,7 @@ class AccountProducerTest {
         // Given
         AccountingCDREvent event = createAccountingCDREvent();
 
+        @SuppressWarnings("unchecked")
         ArgumentCaptor<Message<AccountingCDREvent>> messageCaptor = ArgumentCaptor.forClass(Message.class);
 
         doAnswer(invocation -> {

@@ -121,6 +121,7 @@ class AccountingConsumerTest {
     void testConsumeAccountingEvent_WithKafkaMetadata() {
         // Given
         AccountingRequestDto request = createTestRequest("session1", "testUser");
+        @SuppressWarnings("unchecked")
         IncomingKafkaRecordMetadata<String, AccountingRequestDto> kafkaMetadata =
                 mock(IncomingKafkaRecordMetadata.class);
         when(kafkaMetadata.getPartition()).thenReturn(1);
