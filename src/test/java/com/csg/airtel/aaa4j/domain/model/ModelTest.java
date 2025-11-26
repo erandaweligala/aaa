@@ -147,9 +147,9 @@ class ModelTest {
 
         assertThat(event.eventType()).isEqualTo(AccountingResponseEvent.EventType.COA);
         assertThat(event.sessionId()).isEqualTo("session1");
-        assertThat(event.responseAction()).isEqualTo(AccountingResponseEvent.ResponseAction.DISCONNECT);
+        assertThat(event.action()).isEqualTo(AccountingResponseEvent.ResponseAction.DISCONNECT);
         assertThat(event.message()).isEqualTo("Test message");
-        assertThat(event.attributes()).containsKey("key1");
+        assertThat(event.qosParameters()).containsKey("key1");
     }
 
     @Test

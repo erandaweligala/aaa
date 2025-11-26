@@ -68,12 +68,12 @@ class MappingUtilTest {
         assertThat(response).isNotNull();
         assertThat(response.eventType()).isEqualTo(AccountingResponseEvent.EventType.COA);
         assertThat(response.sessionId()).isEqualTo("session1");
-        assertThat(response.responseAction()).isEqualTo(AccountingResponseEvent.ResponseAction.DISCONNECT);
+        assertThat(response.action()).isEqualTo(AccountingResponseEvent.ResponseAction.DISCONNECT);
         assertThat(response.message()).isEqualTo("Test message");
-        assertThat(response.attributes()).isNotEmpty();
-        assertThat(response.attributes()).containsKeys("username", "sessionId", "nasIP", "framedIP");
-        assertThat(response.attributes().get("username")).isEqualTo("testUser");
-        assertThat(response.attributes().get("sessionId")).isEqualTo("session1");
+        assertThat(response.qosParameters()).isNotEmpty();
+        assertThat(response.qosParameters()).containsKeys("username", "sessionId", "nasIP", "framedIP");
+        assertThat(response.qosParameters().get("username")).isEqualTo("testUser");
+        assertThat(response.qosParameters().get("sessionId")).isEqualTo("session1");
     }
 
     @Test
@@ -92,7 +92,7 @@ class MappingUtilTest {
         // Then
         assertThat(response).isNotNull();
         assertThat(response.eventType()).isEqualTo(AccountingResponseEvent.EventType.ACKNOWLEDGMENT);
-        assertThat(response.attributes()).isEmpty();
+        assertThat(response.qosParameters()).isEmpty();
     }
 
     @Test
@@ -109,13 +109,13 @@ class MappingUtilTest {
         // Then
         assertThat(response).isNotNull();
         assertThat(response.eventType()).isEqualTo(AccountingResponseEvent.EventType.COA);
-        assertThat(response.responseAction()).isEqualTo(AccountingResponseEvent.ResponseAction.DISCONNECT);
+        assertThat(response.action()).isEqualTo(AccountingResponseEvent.ResponseAction.DISCONNECT);
         assertThat(response.sessionId()).isEqualTo("session1");
         assertThat(response.message()).isEqualTo("Disconnect");
-        assertThat(response.attributes()).containsKeys("username", "sessionId", "nasIP", "framedIP");
-        assertThat(response.attributes().get("username")).isEqualTo("testUser");
-        assertThat(response.attributes().get("nasIP")).isEqualTo("192.168.1.1");
-        assertThat(response.attributes().get("framedIP")).isEqualTo("10.0.0.1");
+        assertThat(response.qosParameters()).containsKeys("username", "sessionId", "nasIP", "framedIP");
+        assertThat(response.qosParameters().get("username")).isEqualTo("testUser");
+        assertThat(response.qosParameters().get("nasIP")).isEqualTo("192.168.1.1");
+        assertThat(response.qosParameters().get("framedIP")).isEqualTo("10.0.0.1");
     }
 
     @Test
