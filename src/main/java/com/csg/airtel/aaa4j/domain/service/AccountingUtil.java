@@ -68,6 +68,36 @@ public class AccountingUtil {
 
     }
 
+    /**
+     * Check if a balance is eligible for selection based on quota, time window, and consumption limit
+     * @param balance the balance to check
+     * @param timeWindow the time window string
+     * @return true if balance is eligible, false otherwise
+     */
+    private static boolean isBalanceEligible(Balance balance, String timeWindow) {
+        // Check quota and time window
+        if (balance.getQuota() <= 0 || !isWithinTimeWindow(timeWindow)) {
+            return false;
+        }
+
+        // Check if consumption limit is configured and exceeded
+        // If consumptionLimitWindow is not configured, balance remains available
+        if (balance.getConsumptionLimit() != null && balance.getConsumptionLimit() > 0 &&
+                balance.getConsumptionLimitWindow() != null && balance.getConsumptionLimitWindow() > 0) {
+
+            long windowHours = balance.getConsumptionLimitWindow();
+            long currentConsumption = calculateConsumptionInWindow(balance, windowHours);
+
+            if (currentConsumption >= balance.getConsumptionLimit()) {
+                log.warnf("Skipping bucket %s: consumption limit already exceeded (current=%d, limit=%d)",
+                        balance.getBucketId(), currentConsumption, balance.getConsumptionLimit());
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static Balance getBalance(List<Balance> balances) {
 
         Balance highest = null;
@@ -78,23 +108,9 @@ public class AccountingUtil {
 
             String timeWindow = balance.getTimeWindow(); // assume time window 6PM-6AM
 
-            if (balance.getQuota() <= 0 || !isWithinTimeWindow(timeWindow)) {
+            // Skip balance if it doesn't meet all criteria
+            if (!isBalanceEligible(balance, timeWindow)) {
                 continue;
-            }
-
-            // Check if consumption limit is configured and exceeded
-            // If consumptionLimitWindow is not configured, balance remains available
-            if (balance.getConsumptionLimit() != null && balance.getConsumptionLimit() > 0 &&
-                    balance.getConsumptionLimitWindow() != null && balance.getConsumptionLimitWindow() > 0) {
-
-                long windowHours = balance.getConsumptionLimitWindow();
-                long currentConsumption = calculateConsumptionInWindow(balance, windowHours);
-
-                if (currentConsumption >= balance.getConsumptionLimit()) {
-                    log.warnf("Skipping bucket %s: consumption limit already exceeded (current=%d, limit=%d)",
-                            balance.getBucketId(), currentConsumption, balance.getConsumptionLimit());
-                    continue;
-                }
             }
 
             if((balance.getServiceStartDate().isBefore(LocalDateTime.now()) || balance.getServiceStartDate().isEqual(LocalDateTime.now()) )&& balance.getServiceStatus().equals("ACTIVE")) {
@@ -155,7 +171,7 @@ public class AccountingUtil {
      * @param windowHours number of hours for the consumption limit window (12 or 24)
      * @return LocalDateTime representing the start of the consumption window
      */
-    private LocalDateTime calculateWindowStartTime(long windowHours) {
+    private static LocalDateTime calculateWindowStartTime(long windowHours) {
         LocalDateTime midnight = LocalDate.now().atTime(LocalTime.MIDNIGHT);
 
         if (windowHours == 24) {
@@ -201,7 +217,7 @@ public class AccountingUtil {
      * @param windowHours number of hours for the consumption limit window
      * @return total bytes consumed within the window
      */
-    private long calculateConsumptionInWindow(Balance balance, long windowHours) {
+    private static long calculateConsumptionInWindow(Balance balance, long windowHours) {
         if (balance.getConsumptionHistory() == null || balance.getConsumptionHistory().isEmpty()) {
             return 0L;
         }
