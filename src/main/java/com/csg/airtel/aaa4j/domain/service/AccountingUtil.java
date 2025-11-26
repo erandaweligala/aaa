@@ -19,10 +19,7 @@ import org.jboss.logging.Logger;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-
-
 import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 
@@ -641,39 +638,81 @@ public class AccountingUtil {
         return Uni.createFrom().voidItem();
     }
 
+    /**
+     * Checks if the current time falls within the given time window.
+     * Only supports 24-hour format with hours only (e.g., "00-24", "08-18", "0-12").
+     * Special case: hour 24 represents end of day (23:59:59).
+     *
+     * @param timeWindow time window string in format "HH-HH" where HH is 0-24
+     * @return true if current time is within the window, false otherwise
+     * @throws IllegalArgumentException if the format is invalid
+     */
     public boolean isWithinTimeWindow(String timeWindow) {
-    //todo need implement support timeWindow = 00-24 ,08-24 ,etc  24 format only
+        if (timeWindow == null || timeWindow.trim().isEmpty()) {
+            throw new IllegalArgumentException("Time window string cannot be null or empty");
+        }
+
         String[] times = timeWindow.split("-");
 
         if (times.length != 2) {
             log.errorf("Invalid time window: %s", timeWindow);
-            throw new IllegalArgumentException("Invalid time window format");
+            throw new IllegalArgumentException("Invalid time window format. Expected format: 'HH-HH' (e.g., '00-24', '08-18', '0-12')");
         }
 
-        LocalTime startTime = parseTime(times[0].trim());
-        LocalTime endTime = parseTime(times[1].trim());
+        LocalTime startTime = parseHourOnly(times[0].trim());
+        LocalTime endTime = parseHourOnly(times[1].trim());
         LocalTime currentTime = LocalTime.now();
 
-        if (startTime.isBefore(endTime)) {
-
-            return !currentTime.isBefore(startTime) && !currentTime.isAfter(endTime);
-        } else {
+        // Check if time window crosses midnight (e.g., 18-06 means 6PM to 6AM)
+        if (startTime.isAfter(endTime)) {
+            // Time window crosses midnight
+            // Current time is within window if it's >= start OR <= end
             return !currentTime.isBefore(startTime) || !currentTime.isAfter(endTime);
+        } else {
+            // Normal time window (e.g., 08-18 means 8AM to 6PM)
+            // Current time is within window if it's >= start AND <= end
+            return !currentTime.isBefore(startTime) && !currentTime.isAfter(endTime);
         }
     }
 
-    private static LocalTime parseTime(String time) {
-        time = time.toUpperCase().trim();
+    /**
+     * Parses a time string in hour-only 24-hour format (0-24).
+     * Special case: hour 24 represents end of day (23:59:59).
+     *
+     * @param timeStr the time string (e.g., "0", "8", "24")
+     * @return LocalTime representing the hour (24 becomes 23:59:59)
+     * @throws IllegalArgumentException if format is invalid or hour is out of range
+     */
+    private static LocalTime parseHourOnly(String timeStr) {
+        timeStr = timeStr.trim();
 
-        if (time.contains("AM") || time.contains("PM")) {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("h:mma");
-            if (!time.contains(":")) {
-                time = time.substring(0, time.length() - 2) + ":00" + time.substring(time.length() - 2);
+        if (timeStr.isEmpty()) {
+            throw new IllegalArgumentException("Time string cannot be empty");
+        }
+
+        // Only accept hour-only format (1 or 2 digits)
+        if (!timeStr.matches("\\d{1,2}")) {
+            throw new IllegalArgumentException("Invalid time format: " + timeStr +
+                ". Only hour-only 24-hour format is supported (0-24)");
+        }
+
+        try {
+            int hour = Integer.parseInt(timeStr);
+
+            // Special case: 24 means end of day (23:59:59)
+            if (hour == 24) {
+                return LocalTime.of(23, 59, 59);
             }
-            return LocalTime.parse(time, formatter);
-        } else {
-            // 24-hour format
-            return LocalTime.parse(time);
+
+            if (hour < 0 || hour > 23) {
+                throw new IllegalArgumentException("Hour must be between 0 and 24, got: " + hour);
+            }
+
+            return LocalTime.of(hour, 0);
+
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Unable to parse hour: " + timeStr +
+                ". Expected format: single or double digit hour (0-24)", e);
         }
     }
 
