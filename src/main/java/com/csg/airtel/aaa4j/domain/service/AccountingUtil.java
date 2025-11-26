@@ -82,7 +82,20 @@ public class AccountingUtil {
                 continue;
             }
 
-            //todo get priority balance need implemt this logic consumsion limit exceed bucket ignore and consumptionlimitwindow not in balance is need to be available
+            // Check if consumption limit is configured and exceeded
+            // If consumptionLimitWindow is not configured, balance remains available
+            if (balance.getConsumptionLimit() != null && balance.getConsumptionLimit() > 0 &&
+                    balance.getConsumptionLimitWindow() != null && balance.getConsumptionLimitWindow() > 0) {
+
+                long windowHours = balance.getConsumptionLimitWindow();
+                long currentConsumption = calculateConsumptionInWindow(balance, windowHours);
+
+                if (currentConsumption >= balance.getConsumptionLimit()) {
+                    log.warnf("Skipping bucket %s: consumption limit already exceeded (current=%d, limit=%d)",
+                            balance.getBucketId(), currentConsumption, balance.getConsumptionLimit());
+                    continue;
+                }
+            }
 
             if((balance.getServiceStartDate().isBefore(LocalDateTime.now()) || balance.getServiceStartDate().isEqual(LocalDateTime.now()) )&& balance.getServiceStatus().equals("ACTIVE")) {
                 long priority = balance.getPriority();
