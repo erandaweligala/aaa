@@ -642,39 +642,11 @@ public class AccountingUtil {
     }
 
     public boolean isWithinTimeWindow(String timeWindow) {
-        // Parse the time window string (e.g., "6PM-6AM" or "18:00-06:00")
-        //todo time window ex :- 00-24 , 08-24 , etc need to refactor
-        String[] times = timeWindow.split("-");
-
-        if (times.length != 2) {
-            log.errorf("Invalid time window: %s", timeWindow);
-            throw new IllegalArgumentException("Invalid time window format");
-        }
-
-        LocalTime startTime = parseTime(times[0].trim());
-        LocalTime endTime = parseTime(times[1].trim());
-        LocalTime currentTime = LocalTime.now();
-
-        if (startTime.isBefore(endTime)) {
-
-            return !currentTime.isBefore(startTime) && !currentTime.isAfter(endTime);
-        } else {
-            return !currentTime.isBefore(startTime) || !currentTime.isAfter(endTime);
-        }
-    }
-
-    private static LocalTime parseTime(String time) {
-        time = time.toUpperCase().trim();
-
-        if (time.contains("AM") || time.contains("PM")) {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("h:mma");
-            if (!time.contains(":")) {
-                time = time.substring(0, time.length() - 2) + ":00" + time.substring(time.length() - 2);
-            }
-            return LocalTime.parse(time, formatter);
-        } else {
-            // 24-hour format
-            return LocalTime.parse(time);
+        try {
+            return TimeWindow.parse(timeWindow).containsNow();
+        } catch (IllegalArgumentException e) {
+            log.errorf(e, "Invalid time window: %s", timeWindow);
+            throw e;
         }
     }
 
