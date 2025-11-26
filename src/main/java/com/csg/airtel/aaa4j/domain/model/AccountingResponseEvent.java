@@ -20,12 +20,10 @@ public record AccountingResponseEvent(
         PACKAGE_UPGRADE,
         INTERNAL_ERROR,
         IGNORE_PROCESSING,
-        SUCCESS,
-        ACCEPT
+        SUCCESS
 
     }
     public enum EventType {
-       COA,
-       ACKNOWLEDGMENT
+       COA
     }
 }

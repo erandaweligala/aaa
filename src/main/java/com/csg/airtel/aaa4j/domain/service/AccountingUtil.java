@@ -74,9 +74,13 @@ public class AccountingUtil {
      * @param timeWindow the time window string
      * @return true if balance is eligible, false otherwise
      */
-    private static boolean isBalanceEligible(Balance balance, String timeWindow) {
+    private  boolean isBalanceEligible(Balance balance, String timeWindow) {
 
         if (balance.getQuota() <= 0 || !isWithinTimeWindow(timeWindow)) {
+            return false;
+        }
+
+        if(balance.getServiceExpiry().isBefore(LocalDateTime.now()) ) {
             return false;
         }
 
@@ -114,8 +118,7 @@ public class AccountingUtil {
             if((balance.getServiceStartDate().isBefore(LocalDateTime.now()) || balance.getServiceStartDate().isEqual(LocalDateTime.now()) )&& balance.getServiceStatus().equals("Active")) {
                 long priority = balance.getPriority();
 
-                LocalDateTime expiry = getExpireTime(balance);
-
+                LocalDateTime expiry = balance.getBucketExpiryDate();
 
                 if (highest == null || priority < highestPriority ||
                         (priority == highestPriority && expiry != null &&
@@ -130,13 +133,7 @@ public class AccountingUtil {
         return highest;
     }
 
-    private LocalDateTime getExpireTime(Balance balance) {
-        LocalDateTime expiry = balance.getBucketExpiryDate();
-        if(expiry == null){
-            expiry = balance.getServiceExpiry();
-        }
-        return expiry;
-    }
+
 
     /**
      * @param userData get user session data
@@ -319,7 +316,7 @@ public class AccountingUtil {
         long previousUsage = previousUsageObj == null ? 0L : previousUsageObj;
         long usageDelta = totalUsage - previousUsage;
         if (usageDelta < 0) {
-            usageDelta = 0; // Clamp negative deltas to 0
+            usageDelta = 0;
         }
 
 
@@ -644,7 +641,7 @@ public class AccountingUtil {
         return Uni.createFrom().voidItem();
     }
 
-    public static boolean isWithinTimeWindow(String timeWindow) {
+    public boolean isWithinTimeWindow(String timeWindow) {
         // Parse the time window string (e.g., "6PM-6AM" or "18:00-06:00")
         String[] times = timeWindow.split("-");
 
@@ -683,7 +680,7 @@ public class AccountingUtil {
     private Uni<List<Balance>> getGroupBucket(String groupId) {
         Uni<List<Balance>> balanceListUni;
 
-        if (!Objects.equals(groupId, "1")) {
+        if (!Objects.equals(groupId, "1") &&  !Objects.equals(groupId, null)) {
             balanceListUni = cacheClient.getUserData(groupId)
                     .onItem()
                     .transform(UserSessionData::getBalance);

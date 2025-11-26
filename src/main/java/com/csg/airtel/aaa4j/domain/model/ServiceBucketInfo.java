@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 @ToString
 public class ServiceBucketInfo {
     private String bucketUser;
-    private String serviceId;
+    private long serviceId;
     private String rule;
     private long priority;
     private long initialBalance;
@@ -21,7 +21,7 @@ public class ServiceBucketInfo {
     private LocalDateTime serviceStartDate;
     private String planId;
     private String status;
-    private String bucketId;
+    private long bucketId;
     private long consumptionLimit;
     private long consumptionTimeWindow;
     private String timeWindow;

@@ -14,14 +14,14 @@ public class SQLConstant {
                            s.EXPIRY_DATE,
                            s.SERVICE_START_DATE,
                            s.PLAN_ID,
-                           b.BUCKET_ID,
+                           b.ID AS BUCKET_ID,
                            s.STATUS,
                            s.USERNAME  AS BUCKET_USER,
                            b.CONSUMPTION_LIMIT,
                            u.SESSION_TIMEOUT,
                            b.TIME_WINDOW,
                            b.CONSUMPTION_LIMIT_WINDOW,
-                           s.CYCLE_END_DATE
+                           b.EXPIRATION
                         FROM SERVICE_INSTANCE s
                         JOIN AAA_USER  u
                           ON s.USERNAME  = u.USER_NAME

@@ -66,13 +66,13 @@ public class MappingUtil {
 
     public static Balance createBalance(ServiceBucketInfo bucket) {
         Balance balance = new Balance();
-        balance.setBucketId(bucket.getBucketId());
-        balance.setServiceId(bucket.getServiceId());
+        balance.setBucketId(String.valueOf(bucket.getBucketId()));
         balance.setServiceExpiry(bucket.getExpiryDate());
         balance.setPriority(bucket.getPriority());
         balance.setQuota(bucket.getCurrentBalance());
         balance.setInitialBalance(bucket.getInitialBalance());
         balance.setServiceStartDate(bucket.getServiceStartDate());
+        balance.setServiceId(String.valueOf(bucket.getServiceId()));
         balance.setServiceStatus(bucket.getStatus());
         balance.setConsumptionLimit(bucket.getConsumptionLimit());
         balance.setTimeWindow(bucket.getTimeWindow());

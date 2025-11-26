@@ -80,7 +80,7 @@ public class InterimHandler {
                     for (ServiceBucketInfo bucket : serviceBuckets) {
                         double currentBalance = bucket.getCurrentBalance();
                         totalQuota += currentBalance;
-                        balanceList.add(createBalance(bucket));
+                        balanceList.add(MappingUtil.createBalance(bucket));
                     }
 
                     if (totalQuota <= 0) {
@@ -151,19 +151,6 @@ public class InterimHandler {
                 request.nasIP()
 
         );
-    }
-
-    private Balance createBalance(ServiceBucketInfo bucket) {
-        Balance balance = new Balance();
-        balance.setBucketId(bucket.getBucketId());
-        balance.setServiceId(bucket.getServiceId());
-        balance.setServiceExpiry(bucket.getExpiryDate());
-        balance.setPriority(bucket.getPriority());
-        balance.setQuota(bucket.getCurrentBalance());
-        balance.setInitialBalance(bucket.getInitialBalance());
-        balance.setServiceStartDate(bucket.getServiceStartDate());
-        balance.setServiceStatus(bucket.getStatus());
-        return balance;
     }
 
     private void generateAndSendCDR(AccountingRequestDto request, Session session) {
