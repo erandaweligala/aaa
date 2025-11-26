@@ -81,7 +81,7 @@ class UserBucketRepositoryTest {
 
         when(client.preparedQuery(any(String.class))).thenReturn(preparedQuery);
         when(preparedQuery.execute(any(Tuple.class))).thenReturn(Uni.createFrom().item(rowSet));
-        when(rowSet.iterator()).thenReturn(rows.iterator());
+        when(rowSet.iterator()).thenAnswer(invocation -> rows.iterator());
 
         // When
         UniAssertSubscriber<List<ServiceBucketInfo>> subscriber = userBucketRepository
@@ -107,7 +107,7 @@ class UserBucketRepositoryTest {
 
         when(client.preparedQuery(any(String.class))).thenReturn(preparedQuery);
         when(preparedQuery.execute(any(Tuple.class))).thenReturn(Uni.createFrom().item(rowSet));
-        when(rowSet.iterator()).thenReturn(emptyRows.iterator());
+        when(rowSet.iterator()).thenAnswer(invocation -> emptyRows.iterator());
 
         // When
         UniAssertSubscriber<List<ServiceBucketInfo>> subscriber = userBucketRepository
@@ -154,7 +154,7 @@ class UserBucketRepositoryTest {
 
         when(client.preparedQuery(any(String.class))).thenReturn(preparedQuery);
         when(preparedQuery.execute(any(Tuple.class))).thenReturn(Uni.createFrom().item(rowSet));
-        when(rowSet.iterator()).thenReturn(rows.iterator());
+        when(rowSet.iterator()).thenAnswer(invocation -> rows.iterator());
 
         // When
         UniAssertSubscriber<List<ServiceBucketInfo>> subscriber = userBucketRepository
@@ -196,7 +196,7 @@ class UserBucketRepositoryTest {
 
         when(client.preparedQuery(any(String.class))).thenReturn(preparedQuery);
         when(preparedQuery.execute(any(Tuple.class))).thenReturn(Uni.createFrom().item(rowSet));
-        when(rowSet.iterator()).thenReturn(rows.iterator());
+        when(rowSet.iterator()).thenAnswer(invocation -> rows.iterator());
 
         // When
         UniAssertSubscriber<List<ServiceBucketInfo>> subscriber = userBucketRepository
@@ -230,7 +230,7 @@ class UserBucketRepositoryTest {
 
         when(client.preparedQuery(any(String.class))).thenReturn(preparedQuery);
         when(preparedQuery.execute(any(Tuple.class))).thenReturn(Uni.createFrom().item(rowSet));
-        when(rowSet.iterator()).thenReturn(rows.iterator());
+        when(rowSet.iterator()).thenAnswer(invocation -> rows.iterator());
 
         // When
         UniAssertSubscriber<List<ServiceBucketInfo>> subscriber = userBucketRepository
@@ -257,7 +257,7 @@ class UserBucketRepositoryTest {
 
         when(client.preparedQuery(any(String.class))).thenReturn(preparedQuery);
         when(preparedQuery.execute(any(Tuple.class))).thenReturn(Uni.createFrom().item(rowSet));
-        when(rowSet.iterator()).thenReturn(rows.iterator());
+        when(rowSet.iterator()).thenAnswer(invocation -> rows.iterator());
 
         // When
         UniAssertSubscriber<List<ServiceBucketInfo>> subscriber = userBucketRepository
@@ -282,7 +282,7 @@ class UserBucketRepositoryTest {
 
         when(client.preparedQuery(any(String.class))).thenReturn(preparedQuery);
         when(preparedQuery.execute(any(Tuple.class))).thenReturn(Uni.createFrom().item(rowSet));
-        when(rowSet.iterator()).thenReturn(rows.iterator());
+        when(rowSet.iterator()).thenAnswer(invocation -> rows.iterator());
 
         // When
         UniAssertSubscriber<List<ServiceBucketInfo>> subscriber = userBucketRepository
