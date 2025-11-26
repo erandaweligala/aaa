@@ -82,6 +82,8 @@ public class AccountingUtil {
                 continue;
             }
 
+            //todo get priority balance need implemt this logic consumsion limit exceed bucket ignore and consumptionlimitwindow not in balance is need to be available
+
             if((balance.getServiceStartDate().isBefore(LocalDateTime.now()) || balance.getServiceStartDate().isEqual(LocalDateTime.now()) )&& balance.getServiceStatus().equals("ACTIVE")) {
                 long priority = balance.getPriority();
                 LocalDateTime expiry = balance.getServiceExpiry();
@@ -204,7 +206,7 @@ public class AccountingUtil {
      * @param balance balance to check
      * @return true if limit is exceeded, false otherwise
      */
-    private boolean isConsumptionLimitExceeded(Balance balance) {
+    private boolean isConsumptionLimitExceeded(Balance balance,long previousConsumption,long usageDelta) {
         // Check if consumption limit is configured
         if (balance.getConsumptionLimit() == null || balance.getConsumptionLimit() <= 0 ||
                 balance.getConsumptionLimitWindow() == null || balance.getConsumptionLimitWindow() <= 0) {
@@ -213,13 +215,10 @@ public class AccountingUtil {
 
         long windowHours = balance.getConsumptionLimitWindow();
 
-        // Clean up old records outside the window
         cleanupOldConsumptionRecords(balance, windowHours);
 
-        // Calculate current consumption in window (includes the just-recorded consumption)
-        long currentConsumption = calculateConsumptionInWindow(balance, windowHours);
+        long currentConsumption = previousConsumption + usageDelta;
 
-        // Check if current consumption exceeds limit
         if (currentConsumption > balance.getConsumptionLimit()) {
             log.warnf("Consumption limit exceeded for bucket %s: current=%d, limit=%d",
                     balance.getBucketId(), currentConsumption, balance.getConsumptionLimit());
@@ -291,23 +290,27 @@ public class AccountingUtil {
             usageDelta = 0; // Clamp negative deltas to 0
         }
 
-        // Update quota first
+
         long newQuota = updateQuotaForBucketChange(
                 userData, sessionData, foundBalance, combinedBalances,
                 previousUsageBucketId, bucketChanged, totalUsage
         );
 
-        // Record consumption in history BEFORE checking limit if limit is configured
         if (foundBalance.getConsumptionLimit() != null && foundBalance.getConsumptionLimit() > 0 &&
                 foundBalance.getConsumptionLimitWindow() != null && foundBalance.getConsumptionLimitWindow() > 0) {
-            recordConsumption(foundBalance, usageDelta);
+            long windowHours = foundBalance.getConsumptionLimitWindow();
 
-            // Check if consumption limit is now exceeded (after recording)
-            if (isConsumptionLimitExceeded(foundBalance)) {
+
+            long previousConsumption = calculateConsumptionInWindow(foundBalance, windowHours);
+            if (previousConsumption < foundBalance.getConsumptionLimit()) {
+                recordConsumption(foundBalance, usageDelta);
+            }
+
+            if (isConsumptionLimitExceeded(foundBalance,previousConsumption,usageDelta)) {
                 log.warnf("Consumption limit exceeded for user: %s, bucket: %s. Triggering disconnect.",
                         request.username(), foundBalance.getBucketId());
 
-                // Create result with updated quota
+
                 UpdateResult result = UpdateResult.success(
                         newQuota,
                         foundBalance.getBucketId(),
@@ -316,6 +319,7 @@ public class AccountingUtil {
                 );
 
                 // Trigger CoA disconnect due to consumption limit exceeded
+
                 return handleConsumptionLimitExceeded(userData, request, foundBalance, result);
             }
         }
