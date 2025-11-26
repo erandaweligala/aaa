@@ -78,12 +78,15 @@ public class StartHandler {
         // Declare balanceListUni outside the if block
         Uni<List<Balance>> balanceListUni;
 
-        if (!Objects.equals(userSessionData.getGroupId(), "1")) {
-            balanceListUni = utilCache.getUserData(userSessionData.getGroupId())
+        String groupId = userSessionData.getGroupId();
+        boolean isGroupUser = groupId != null && !groupId.equals("1");
+
+        if (isGroupUser) {
+            balanceListUni = utilCache.getUserData(groupId)
                     .onItem()
                     .transform(UserSessionData::getBalance);
         } else {
-            // Use the user's own balance list if groupId is "1"
+            // Use the user's own balance list if groupId is "1" or null
             balanceListUni = Uni.createFrom().item(userSessionData.getBalance());
         }
 
@@ -164,12 +167,7 @@ public class StartHandler {
                     for (ServiceBucketInfo bucket : serviceBuckets) {
                         Balance balance = MappingUtil.createBalance(bucket);
 
-                        if (!Objects.equals(request.username(), bucket.getBucketUser())) {
-                            balanceGroupList.add(balance);
-                            groupId = bucket.getBucketUser();
-                        } else {
-                            balanceList.add(balance);
-                        }
+                        groupId = getGroupId(request, bucket, balanceGroupList, balance, groupId, balanceList);
                         totalQuota += bucket.getCurrentBalance();
                     }
 
@@ -236,6 +234,16 @@ public class StartHandler {
                             request.username());
                     return Uni.createFrom().voidItem();
                 });
+    }
+
+    private static String getGroupId(AccountingRequestDto request, ServiceBucketInfo bucket, List<Balance> balanceGroupList, Balance balance, String groupId, List<Balance> balanceList) {
+        if (!Objects.equals(request.username(), bucket.getBucketUser())) {
+            balanceGroupList.add(balance);
+            groupId = bucket.getBucketUser();
+        } else {
+            balanceList.add(balance);
+        }
+        return groupId;
     }
 
     private double calculateAvailableBalance(List<Balance> balanceList) {
