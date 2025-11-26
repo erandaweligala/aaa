@@ -1,33 +1,28 @@
 package com.csg.airtel.aaa4j.domain.service;
 
 import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.Objects;
 
 /**
  * Represents a time window with start and end times.
- * Supports multiple time formats:
- * - Hour-only format: "00-24", "08-24" (where 24 means end of day 23:59:59)
- * - 24-hour format: "08:00-18:00", "18:00-06:00"
- * - 12-hour format: "6PM-6AM", "8:00AM-6:00PM"
+ * Supports only 24-hour format with hours only:
+ * - Hour-only format: "00-24", "08-24", "0-12" (where 24 means end of day 23:59:59)
  */
 public class TimeWindow {
 
-    private static final DateTimeFormatter TWELVE_HOUR_FORMATTER = DateTimeFormatter.ofPattern("h:mma");
     private final LocalTime startTime;
     private final LocalTime endTime;
     private final boolean crossesMidnight;
 
     /**
      * Creates a TimeWindow from a time window string.
+     * Only supports 24-hour format with hours only (e.g., "00-24", "08-18", "0-12").
      *
-     * @param timeWindowString the time window string (e.g., "00-24", "08:00-18:00", "6PM-6AM")
+     * @param timeWindowString the time window string in format "HH-HH" where HH is 0-24
      * @return a TimeWindow instance
      * @throws IllegalArgumentException if the format is invalid
      */
     public static TimeWindow parse(String timeWindowString) {
-        //todo only check this format only ex :- 00-24 24hours
         if (timeWindowString == null || timeWindowString.trim().isEmpty()) {
             throw new IllegalArgumentException("Time window string cannot be null or empty");
         }
@@ -35,14 +30,14 @@ public class TimeWindow {
         String[] parts = timeWindowString.split("-");
         if (parts.length != 2) {
             throw new IllegalArgumentException("Invalid time window format: " + timeWindowString +
-                ". Expected format: 'start-end' (e.g., '00-24', '08:00-18:00', '6PM-6AM')");
+                ". Expected format: 'HH-HH' (e.g., '00-24', '08-18', '0-12')");
         }
 
         String startStr = parts[0].trim();
         String endStr = parts[1].trim();
 
-        LocalTime startTime = parseTime(startStr);
-        LocalTime endTime = parseTime(endStr);
+        LocalTime startTime = parseHourOnly(startStr);
+        LocalTime endTime = parseHourOnly(endStr);
 
         return new TimeWindow(startTime, endTime);
     }
@@ -81,53 +76,42 @@ public class TimeWindow {
     }
 
     /**
-     * Parses a time string in various formats:
-     * - Hour-only format: "0", "8", "24" (where 24 becomes 23:59:59)
-     * - 24-hour format: "08:00", "18:30"
-     * - 12-hour format: "6PM", "8:00AM"
+     * Parses a time string in hour-only format (0-24).
+     *
+     * @param timeStr the time string (e.g., "0", "8", "24")
+     * @return LocalTime representing the hour (24 becomes 23:59:59)
+     * @throws IllegalArgumentException if format is invalid or hour is out of range
      */
-    private static LocalTime parseTime(String timeStr) {
+    private static LocalTime parseHourOnly(String timeStr) {
         timeStr = timeStr.trim();
 
         if (timeStr.isEmpty()) {
             throw new IllegalArgumentException("Time string cannot be empty");
         }
 
+        // Only accept hour-only format (1 or 2 digits)
+        if (!timeStr.matches("\\d{1,2}")) {
+            throw new IllegalArgumentException("Invalid time format: " + timeStr +
+                ". Only hour-only format is supported (0-24)");
+        }
+
         try {
-            // Try hour-only format first (e.g., "0", "8", "24")
-            if (timeStr.matches("\\d{1,2}")) {
-                int hour = Integer.parseInt(timeStr);
+            int hour = Integer.parseInt(timeStr);
 
-                // Special case: 24 means end of day (23:59:59)
-                if (hour == 24) {
-                    return LocalTime.of(23, 59, 59);
-                }
-
-                if (hour < 0 || hour > 23) {
-                    throw new IllegalArgumentException("Hour must be between 0 and 24, got: " + hour);
-                }
-
-                return LocalTime.of(hour, 0);
+            // Special case: 24 means end of day (23:59:59)
+            if (hour == 24) {
+                return LocalTime.of(23, 59, 59);
             }
 
-            // Try 12-hour format with AM/PM
-            String upperTime = timeStr.toUpperCase();
-            if (upperTime.contains("AM") || upperTime.contains("PM")) {
-                // Add :00 if no minutes specified (e.g., "6PM" -> "6:00PM")
-                if (!timeStr.contains(":")) {
-                    String meridiem = upperTime.substring(upperTime.length() - 2);
-                    String hourPart = timeStr.substring(0, timeStr.length() - 2);
-                    timeStr = hourPart + ":00" + meridiem;
-                }
-                return LocalTime.parse(timeStr.toUpperCase(), TWELVE_HOUR_FORMATTER);
+            if (hour < 0 || hour > 23) {
+                throw new IllegalArgumentException("Hour must be between 0 and 24, got: " + hour);
             }
 
-            // Try 24-hour format (e.g., "08:00", "18:30")
-            return LocalTime.parse(timeStr);
+            return LocalTime.of(hour, 0);
 
-        } catch (DateTimeParseException | NumberFormatException e) {
-            throw new IllegalArgumentException("Unable to parse time: " + timeStr +
-                ". Supported formats: hour-only (0-24), 24-hour (HH:mm), or 12-hour (h:mmAM/PM)", e);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Unable to parse hour: " + timeStr +
+                ". Expected format: single or double digit hour (0-24)", e);
         }
     }
 

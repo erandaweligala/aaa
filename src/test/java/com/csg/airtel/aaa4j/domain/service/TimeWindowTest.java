@@ -45,49 +45,19 @@ class TimeWindowTest {
     }
 
     @Test
-    @DisplayName("Should parse 24-hour format: 08:00-18:00")
-    void shouldParse24HourFormat() {
-        TimeWindow window = TimeWindow.parse("08:00-18:00");
-
-        assertThat(window.getStartTime()).isEqualTo(LocalTime.of(8, 0));
-        assertThat(window.getEndTime()).isEqualTo(LocalTime.of(18, 0));
-        assertThat(window.crossesMidnight()).isFalse();
-    }
-
-    @Test
-    @DisplayName("Should parse 24-hour format that crosses midnight: 18:00-06:00")
-    void shouldParse24HourFormatCrossingMidnight() {
-        TimeWindow window = TimeWindow.parse("18:00-06:00");
+    @DisplayName("Should parse hour-only format that crosses midnight: 18-6")
+    void shouldParseHourOnlyFormatCrossingMidnight() {
+        TimeWindow window = TimeWindow.parse("18-6");
 
         assertThat(window.getStartTime()).isEqualTo(LocalTime.of(18, 0));
         assertThat(window.getEndTime()).isEqualTo(LocalTime.of(6, 0));
         assertThat(window.crossesMidnight()).isTrue();
-    }
-
-    @Test
-    @DisplayName("Should parse 12-hour format: 6PM-6AM")
-    void shouldParse12HourFormat() {
-        TimeWindow window = TimeWindow.parse("6PM-6AM");
-
-        assertThat(window.getStartTime()).isEqualTo(LocalTime.of(18, 0));
-        assertThat(window.getEndTime()).isEqualTo(LocalTime.of(6, 0));
-        assertThat(window.crossesMidnight()).isTrue();
-    }
-
-    @Test
-    @DisplayName("Should parse 12-hour format with minutes: 8:30AM-6:45PM")
-    void shouldParse12HourFormatWithMinutes() {
-        TimeWindow window = TimeWindow.parse("8:30AM-6:45PM");
-
-        assertThat(window.getStartTime()).isEqualTo(LocalTime.of(8, 30));
-        assertThat(window.getEndTime()).isEqualTo(LocalTime.of(18, 45));
-        assertThat(window.crossesMidnight()).isFalse();
     }
 
     @Test
     @DisplayName("Should handle whitespace in time window string")
     void shouldHandleWhitespace() {
-        TimeWindow window = TimeWindow.parse("  08:00  -  18:00  ");
+        TimeWindow window = TimeWindow.parse("  08  -  18  ");
 
         assertThat(window.getStartTime()).isEqualTo(LocalTime.of(8, 0));
         assertThat(window.getEndTime()).isEqualTo(LocalTime.of(18, 0));
@@ -96,13 +66,13 @@ class TimeWindowTest {
     @ParameterizedTest
     @DisplayName("Should correctly identify time within normal window")
     @CsvSource({
-        "08:00-18:00, 08:00, true",
-        "08:00-18:00, 12:00, true",
-        "08:00-18:00, 18:00, true",
-        "08:00-18:00, 07:59, false",
-        "08:00-18:00, 18:01, false",
-        "08:00-18:00, 06:00, false",
-        "08:00-18:00, 20:00, false"
+        "8-18, 08:00, true",
+        "8-18, 12:00, true",
+        "8-18, 18:00, true",
+        "8-18, 07:59, false",
+        "8-18, 18:01, false",
+        "8-18, 06:00, false",
+        "8-18, 20:00, false"
     })
     void shouldCheckTimeInNormalWindow(String windowStr, String timeStr, boolean expected) {
         TimeWindow window = TimeWindow.parse(windowStr);
@@ -114,14 +84,14 @@ class TimeWindowTest {
     @ParameterizedTest
     @DisplayName("Should correctly identify time within midnight-crossing window")
     @CsvSource({
-        "18:00-06:00, 18:00, true",
-        "18:00-06:00, 23:59, true",
-        "18:00-06:00, 00:00, true",
-        "18:00-06:00, 03:00, true",
-        "18:00-06:00, 06:00, true",
-        "18:00-06:00, 12:00, false",
-        "18:00-06:00, 17:59, false",
-        "18:00-06:00, 06:01, false"
+        "18-6, 18:00, true",
+        "18-6, 23:59, true",
+        "18-6, 00:00, true",
+        "18-6, 03:00, true",
+        "18-6, 06:00, true",
+        "18-6, 12:00, false",
+        "18-6, 17:59, false",
+        "18-6, 06:01, false"
     })
     void shouldCheckTimeInMidnightCrossingWindow(String windowStr, String timeStr, boolean expected) {
         TimeWindow window = TimeWindow.parse(windowStr);
@@ -154,7 +124,11 @@ class TimeWindowTest {
         "25-12",
         "-1-12",
         "08:00-25:00",
-        "invalid-format"
+        "invalid-format",
+        "08:00-18:00",  // 24-hour format with minutes no longer supported
+        "18:00-06:00",  // 24-hour format with minutes no longer supported
+        "6PM-6AM",      // 12-hour format no longer supported
+        "8:30AM-6:45PM" // 12-hour format with minutes no longer supported
     })
     void shouldThrowExceptionForInvalidFormats(String invalidWindow) {
         assertThatThrownBy(() -> TimeWindow.parse(invalidWindow))
@@ -172,8 +146,8 @@ class TimeWindowTest {
     @Test
     @DisplayName("Should have correct toString format")
     void shouldHaveCorrectToString() {
-        TimeWindow normalWindow = TimeWindow.parse("08:00-18:00");
-        TimeWindow midnightWindow = TimeWindow.parse("18:00-06:00");
+        TimeWindow normalWindow = TimeWindow.parse("8-18");
+        TimeWindow midnightWindow = TimeWindow.parse("18-6");
 
         assertThat(normalWindow.toString())
             .contains("08:00")
@@ -189,9 +163,9 @@ class TimeWindowTest {
     @Test
     @DisplayName("Should implement equals and hashCode correctly")
     void shouldImplementEqualsAndHashCode() {
-        TimeWindow window1 = TimeWindow.parse("08:00-18:00");
-        TimeWindow window2 = TimeWindow.parse("08:00-18:00");
-        TimeWindow window3 = TimeWindow.parse("09:00-17:00");
+        TimeWindow window1 = TimeWindow.parse("8-18");
+        TimeWindow window2 = TimeWindow.parse("08-18");
+        TimeWindow window3 = TimeWindow.parse("9-17");
 
         assertThat(window1).isEqualTo(window2);
         assertThat(window1).isNotEqualTo(window3);
@@ -208,42 +182,12 @@ class TimeWindowTest {
     }
 
     @Test
-    @DisplayName("Should handle mixed formats in same window string")
-    void shouldHandleMixedFormats() {
-        TimeWindow window1 = TimeWindow.parse("8-18:00");
-        TimeWindow window2 = TimeWindow.parse("08:00-18");
-
-        assertThat(window1.getStartTime()).isEqualTo(LocalTime.of(8, 0));
-        assertThat(window1.getEndTime()).isEqualTo(LocalTime.of(18, 0));
-        assertThat(window2.getStartTime()).isEqualTo(LocalTime.of(8, 0));
-        assertThat(window2.getEndTime()).isEqualTo(LocalTime.of(18, 0));
-    }
-
-    @Test
-    @DisplayName("Should handle lowercase AM/PM")
-    void shouldHandleLowercaseAmPm() {
-        TimeWindow window = TimeWindow.parse("6pm-6am");
-
-        assertThat(window.getStartTime()).isEqualTo(LocalTime.of(18, 0));
-        assertThat(window.getEndTime()).isEqualTo(LocalTime.of(6, 0));
-    }
-
-    @Test
     @DisplayName("Should handle boundary case: midnight to midnight")
     void shouldHandleMidnightToMidnight() {
-        TimeWindow window = TimeWindow.parse("00:00-00:00");
+        TimeWindow window = TimeWindow.parse("0-0");
 
         assertThat(window.getStartTime()).isEqualTo(LocalTime.of(0, 0));
         assertThat(window.getEndTime()).isEqualTo(LocalTime.of(0, 0));
         assertThat(window.crossesMidnight()).isFalse();
-    }
-
-    @Test
-    @DisplayName("Should handle noon formats")
-    void shouldHandleNoonFormats() {
-        TimeWindow window = TimeWindow.parse("12:00PM-11:59PM");
-
-        assertThat(window.getStartTime()).isEqualTo(LocalTime.of(12, 0));
-        assertThat(window.getEndTime()).isEqualTo(LocalTime.of(23, 59));
     }
 }
