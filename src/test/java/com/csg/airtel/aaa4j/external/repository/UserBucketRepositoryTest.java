@@ -136,7 +136,10 @@ class UserBucketRepositoryTest {
                 .subscribe().withSubscriber(UniAssertSubscriber.create());
 
         // Then
-        subscriber.awaitItem();
+        subscriber.awaitFailure();
+        Throwable failure = subscriber.getFailure();
+        assertThat(failure).isInstanceOf(RuntimeException.class);
+        assertThat(failure.getMessage()).isEqualTo("Database connection error");
         verify(preparedQuery).execute(any(Tuple.class));
     }
 
