@@ -125,7 +125,7 @@ class AccountProducerTest {
             Message<DBWriteRequest> message = invocation.getArgument(0);
             message.ack();
             return null;
-        }).when(dbWriteRequestEmitter).send(any());
+        }).when(dbWriteRequestEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -134,7 +134,7 @@ class AccountProducerTest {
 
         // Then
         subscriber.awaitItem().assertCompleted();
-        verify(dbWriteRequestEmitter).send(any());
+        verify(dbWriteRequestEmitter).send(any(Message.class));
     }
 
     @Test
@@ -147,7 +147,7 @@ class AccountProducerTest {
             Message<DBWriteRequest> message = invocation.getArgument(0);
             message.nack(testException);
             return null;
-        }).when(dbWriteRequestEmitter).send(any());
+        }).when(dbWriteRequestEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -156,7 +156,7 @@ class AccountProducerTest {
 
         // Then
         subscriber.awaitFailure();
-        verify(dbWriteRequestEmitter).send(any());
+        verify(dbWriteRequestEmitter).send(any(Message.class));
     }
 
     @Test
@@ -171,7 +171,7 @@ class AccountProducerTest {
             Message<DBWriteRequest> message = invocation.getArgument(0);
             message.ack();
             return null;
-        }).when(dbWriteRequestEmitter).send(any());
+        }).when(dbWriteRequestEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -194,7 +194,7 @@ class AccountProducerTest {
             Message<AccountingResponseEvent> message = invocation.getArgument(0);
             message.ack();
             return null;
-        }).when(accountingResponseEmitter).send(any());
+        }).when(accountingResponseEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -203,7 +203,7 @@ class AccountProducerTest {
 
         // Then
         subscriber.awaitItem().assertCompleted();
-        verify(accountingResponseEmitter).send(any());
+        verify(accountingResponseEmitter).send(any(Message.class));
     }
 
     @Test
@@ -216,7 +216,7 @@ class AccountProducerTest {
             Message<AccountingResponseEvent> message = invocation.getArgument(0);
             message.nack(testException);
             return null;
-        }).when(accountingResponseEmitter).send(any());
+        }).when(accountingResponseEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -225,7 +225,7 @@ class AccountProducerTest {
 
         // Then
         subscriber.awaitFailure();
-        verify(accountingResponseEmitter).send(any());
+        verify(accountingResponseEmitter).send(any(Message.class));
     }
 
     @Test
@@ -240,7 +240,7 @@ class AccountProducerTest {
             Message<AccountingResponseEvent> message = invocation.getArgument(0);
             message.ack();
             return null;
-        }).when(accountingResponseEmitter).send(any());
+        }).when(accountingResponseEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -263,7 +263,7 @@ class AccountProducerTest {
             Message<AccountingCDREvent> message = invocation.getArgument(0);
             message.ack();
             return null;
-        }).when(accountingCDREventEmitter).send(any());
+        }).when(accountingCDREventEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -272,7 +272,7 @@ class AccountProducerTest {
 
         // Then
         subscriber.awaitItem().assertCompleted();
-        verify(accountingCDREventEmitter).send(any());
+        verify(accountingCDREventEmitter).send(any(Message.class));
     }
 
     @Test
@@ -285,7 +285,7 @@ class AccountProducerTest {
             Message<AccountingCDREvent> message = invocation.getArgument(0);
             message.nack(testException);
             return null;
-        }).when(accountingCDREventEmitter).send(any());
+        }).when(accountingCDREventEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -294,7 +294,7 @@ class AccountProducerTest {
 
         // Then
         subscriber.awaitFailure();
-        verify(accountingCDREventEmitter).send(any());
+        verify(accountingCDREventEmitter).send(any(Message.class));
     }
 
     @Test
@@ -309,7 +309,7 @@ class AccountProducerTest {
             Message<AccountingCDREvent> message = invocation.getArgument(0);
             message.ack();
             return null;
-        }).when(accountingCDREventEmitter).send(any());
+        }).when(accountingCDREventEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -334,7 +334,7 @@ class AccountProducerTest {
             Message<DBWriteRequest> message = invocation.getArgument(0);
             message.ack();
             return null;
-        }).when(dbWriteRequestEmitter).send(any());
+        }).when(dbWriteRequestEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber1 = accountProducer
@@ -348,7 +348,7 @@ class AccountProducerTest {
         // Then
         subscriber1.awaitItem().assertCompleted();
         subscriber2.awaitItem().assertCompleted();
-        verify(dbWriteRequestEmitter, times(2)).send(any());
+        verify(dbWriteRequestEmitter, times(2)).send(any(Message.class));
     }
 
     @Test
@@ -363,7 +363,7 @@ class AccountProducerTest {
             Message<AccountingCDREvent> message = invocation.getArgument(0);
             message.ack();
             return null;
-        }).when(accountingCDREventEmitter).send(any());
+        }).when(accountingCDREventEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -372,7 +372,7 @@ class AccountProducerTest {
 
         // Then
         subscriber.awaitItem().assertCompleted();
-        verify(accountingCDREventEmitter).send(any());
+        verify(accountingCDREventEmitter).send(any(Message.class));
     }
 
     @Test
@@ -386,7 +386,7 @@ class AccountProducerTest {
             Message<AccountingCDREvent> message = invocation.getArgument(0);
             message.ack();
             return null;
-        }).when(accountingCDREventEmitter).send(any());
+        }).when(accountingCDREventEmitter).send(any(Message.class));
 
         // When
         UniAssertSubscriber<Void> subscriber = accountProducer
@@ -395,6 +395,6 @@ class AccountProducerTest {
 
         // Then
         subscriber.awaitItem().assertCompleted();
-        verify(accountingCDREventEmitter).send(any());
+        verify(accountingCDREventEmitter).send(any(Message.class));
     }
 }
